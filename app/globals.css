@@ -1,0 +1,571 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* 英語 sans (Geist) を主軸に、日本語は Noto Sans JP → system fallback。
+     Geist は ASCII 中心、Noto Sans JP は日本語 glyph を補完する。
+     ES 添削プロダクトとして、和文の読み心地を Notion / Linear 系の
+     「OS 既定 + 補助フォント」並みに整える(Phase E UI polish)。 */
+  --font-sans:
+    var(--font-geist-sans), var(--font-noto-sans-jp), "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", "Meiryo", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  /* Phase E UI polish:
+     shadcn デフォルト primary は oklch(0.205 0 0) でほぼ黒に近く、grey に見えてしまい
+     アクセントカラーとしての機能を果たさなかった(ユーザー指摘「素人感」の主原因の 1 つ)。
+     deep indigo に置換し、primary button / focus ring / accent line / 透明性 evidence の
+     出典リンクで「静謐な強調」を実現。
+     C: 0.18 で意図的に saturation を抑え、Linear / Notion 系のミニマル基調を壊さない。 */
+  --primary: oklch(0.43 0.18 264);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  /* ring も primary に近い色に合わせ、focus 時の視覚的一貫性を保つ */
+  --ring: oklch(0.43 0.18 264 / 0.45);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  /* dark mode は indigo を一段明るく(L 0.65)して、暗背景上で十分なコントラストを確保 */
+  --primary: oklch(0.65 0.17 264);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.65 0.17 264 / 0.55);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* =============================================================================
+   日本語テキストに優しい改行ユーティリティ (UX 改修 2026-05-24)
+   ----------------------------------------------------------------------------
+   背景: 既定では英文ベースの折り返し規則で日本語が句読点を跨いで不自然な位置で
+   折り返される(例: 「読み込んで | います。」のような切れ方)。本ユーティリティ
+   で日本語の読み心地に寄せる。
+
+   - `text-jp`: 段落・説明テキスト用。break-keep で英単語の途中改行を抑え、
+     line-break: strict で日本語禁則を厳格化する。
+   - `text-jp-balance`: 見出し・短い段落用。text-wrap: balance で複数行のバランス
+     を取り、break-keep + line-break: strict を継承。
+   - `text-jp-flow`: long-form paragraph 用(rationale など)。word-break: normal
+     で文字単位の折り返しを許可、container 幅まで自然に折り返す。
+     line-break: strict は維持(行頭禁則文字「。」「、」「」」の保護)。
+     2026-05-25 Task #27 で追加(text-jp の word-break: keep-all 副作用回避)。
+
+   設計判断:
+   - Tailwind v4 の組み込み `text-balance` / `break-keep` を組み合わせれば同等
+     表現も可能だが、複数 utility を毎回並べるのは煩雑。@utility で 1 単位の
+     class に集約する。
+   - `lang="ja"` の <html> 全体に強制しない(英文 ASCII 比率の高い箇所で
+     break-keep が逆に読みづらくする)。明示的に opt-in する。
+   - `overflow-wrap` は `normal` を採用(`anywhere` は CSS 仕様上
+     `word-break: keep-all` を上書きしてしまい、「AI / が」「組み立 / てます」
+     のような助詞分離 / 漢字熟語の途中切れを引き起こすため不可)。本プロダクト
+     のテキストには画面幅を超える長い英単語が無いため副作用なし
+     (GPT-5.4 / Bet AI / Fact Base 等のキーワードは短い)。
+   ========================================================================== */
+@utility text-jp {
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-break: strict;
+}
+
+@utility text-jp-balance {
+  text-wrap: balance;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-break: strict;
+}
+
+/* Task #27 (2026-05-25): rationale など long-form paragraph 用。
+   text-jp の word-break: keep-all は短文の熟語/助詞分離保護に有効だが、
+   長文では句読点境界でしか改行できず行が短くなる副作用がある(rationale の
+   右側が大きく空く現象、ユーザー dogfood 観察 2026-05-25)。
+   text-jp-flow は word-break: normal で自然な文字単位の折り返しを許可、
+   line-break: strict は維持(行頭禁則文字「。」「、」「」」の保護)。
+   overflow-wrap: break-word を併用して、万一長い英単語が来た場合の
+   container 突き抜けを防ぐ(本プロダクトに該当ケースは無いが防御的)。
+
+   適用先: SuggestionCard.tsx の rationale 段落(L386)のみ。
+   他のテキスト(元の表現、提案、tone_hint、UI 文言)は短文のため text-jp 維持。 */
+@utility text-jp-flow {
+  word-break: normal;
+  overflow-wrap: break-word;
+  line-break: strict;
+}
+
+/* =============================================================================
+   2026-05-25 Task #18: Partial refresh の loading / animation keyframes
+   ----------------------------------------------------------------------------
+   背景: AI 応答に数秒の遅延がある partial refresh で「いきなり変わる」UX を
+   段階的に可視化するための animation。
+
+   - fade-out: pending deletion(削除予告)の 1.5 秒 fade。delay 後に commitPartialRefreshCleanup
+     が走り suggestions から実除外される。ユーザーが「なぜ消えたか」を理解する時間を確保。
+   - fade-in: 新規追加 suggestion の 0.5 秒 fade-in。突然 pop しない演出。
+   - highlight-flash: 更新済 suggestion に短い primary 色 flash(0.5 秒、ease-out)。
+     「この内容が更新された」を視覚的に認識させる。
+
+   Inviolable constraints との整合:
+   - すべての操作は Undo 可能: fade-out 中も Undo / 履歴 revert で取り戻せる
+   - 数値スコア禁止: animation は時間ベースのみ、数値は出さない
+   - 楽観的並行制御: animation は CSS のみで、ユーザー操作はそのまま続けられる
+
+   設計判断 (採用 / 不採用):
+   - fade-out duration = 1500ms: dispatch の指示「1-2 秒の fade out delay」の範囲内、
+     ユーザー認知に必要な最小時間 + commitPartialRefreshCleanup の setTimeout と同じ値
+   - fade-in / highlight-flash duration = 500ms: 視覚 noise を抑え、操作を遅延させない
+   - reduced motion: prefers-reduced-motion を尊重し animation を無効化(アクセシビリティ)
+   ========================================================================== */
+@keyframes fade-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0.4;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes highlight-flash {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.43 0.18 264 / 0);
+  }
+  30% {
+    box-shadow: 0 0 0 4px oklch(0.43 0.18 264 / 0.18);
+  }
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.43 0.18 264 / 0);
+  }
+}
+
+@utility animate-fade-out {
+  animation: fade-out 1.5s ease-out forwards;
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.5s ease-out;
+}
+
+@utility animate-highlight-flash {
+  animation: highlight-flash 0.5s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-out,
+  .animate-fade-in,
+  .animate-highlight-flash {
+    animation: none !important;
+  }
+}
+
+/* =============================================================================
+   2026-05-25 Task #28: details 展開時のかくつき緩和
+   ----------------------------------------------------------------------------
+   背景: <details> が open になる瞬間に content が display:block に切り替わり、
+   height が瞬時に変化 → 周辺レイアウトが「ガクン」と動く。HTML 標準の挙動で、
+   height auto への CSS transition は構造的に難しい(ブラウザは auto を計算可能
+   な数値として transition できない)。
+
+   修正: best-effort で「滑らか感」を出す。content に opacity 0→1 + translateY
+   (-4px)→0 の小さな fade-in を当てる。height jump 自体は残るが、「突然消える /
+    突然出る」感は緩和される(視覚負荷の低減)。
+
+   selector: details[open] > :not(summary)
+   - SuggestionCard.tsx の evidence 折りたたみ(本 Task の主対象)
+   - SuggestionListPanel.tsx の自動修正済セクション(positive な統一)
+   - InterviewPanel.tsx の purpose / answer hint 折りたたみ(positive な統一)
+   いずれも opacity / translateY の小さな fade で破壊的副作用はなく、むしろ
+   「セクション開閉のふわっと感」が 3 箇所で一貫する。
+
+   完全解消(height 0 → auto への smooth transition)は CSS Grid grid-template-rows
+   trick で可能だが、構造変更が大きいため本 Task では best-effort のみ。
+
+   reduced motion: 既存 @media (prefers-reduced-motion: reduce) と整合させ、
+   details-slide-down も無効化(アクセシビリティ)。
+   ========================================================================== */
+@keyframes details-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+details[open] > :not(summary) {
+  animation: details-slide-down 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  details[open] > :not(summary) {
+    animation: none !important;
+  }
+}
+
+/* =============================================================================
+   2026-05-29: ランディングページ(LP)専用アニメーション
+   ----------------------------------------------------------------------------
+   背景: アプリを `/app` に移動し、`/` を新規 LP にした。LP は「華やかめ」の演出を
+   要件とするが、新規依存(framer-motion 等)は入れない方針。そこで CSS keyframes +
+   Tailwind transition + IntersectionObserver(components/landing/Reveal.tsx)の
+   組み合わせで華やかさを出す。色は既存テーマ変数(--primary 等)を流用し、世界観を
+   アプリと統一する(華やかさは「動き・グラデ・hover」で出し、配色では逸脱しない)。
+
+   - lp-gradient-pan: hero 背景の animated gradient。background-position を
+     ゆっくり往復させ、静的な単色背景にない「奥行きと呼吸」を与える。背景色は
+     primary(deep indigo)を軸に、低彩度のグラデで上品さを保つ。
+   - lp-float: hero の装飾 blob(ぼかした光彩)をゆっくり上下に漂わせる。
+   - lp-blob-drift: 2 つ目の blob を別位相でドリフトさせ、動きに層を作る。
+
+   Inviolable constraints / アクセシビリティとの整合:
+   - prefers-reduced-motion: reduce で全 LP animation を無効化(下部 @media)。
+   - 数値スコアは LP に一切出さない(animation は時間ベースのみ)。
+   ========================================================================== */
+@keyframes lp-gradient-pan {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes lp-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -24px, 0) scale(1.05);
+  }
+}
+
+@keyframes lp-blob-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(18px, 20px, 0) scale(0.95);
+  }
+}
+
+@keyframes lp-shimmer {
+  0% {
+    background-position: -180% 0;
+  }
+  100% {
+    background-position: 180% 0;
+  }
+}
+
+/* =============================================================================
+   2026-05-29 改修(LP 背景の連続グラデ化 — 継ぎ目を消す)
+   ----------------------------------------------------------------------------
+   背景: 旧 LP は「グラデのヒーロー → 単色/muted のセクション(bg-muted/50 等)」
+   というハードな色ブロックの連続で、各セクション境界に seam(継ぎ目)が目立っていた
+   (ユーザー指摘)。
+
+   方針: ページ全体(LP の <main>)に **1 枚の連続した縦グラデ** を敷く。最上部
+   (ヒーロー)が最も色がのり、下へ向かってなめらかに淡まり、ページ下部はほぼ白
+   (--background)に近いトーンへ連続的に流れる。これでページのどこにもハードな
+   色の段差を作らない(セクションは透明にしてこの背景の上に乗せる)。
+
+   実装メモ:
+   - <main> に `background-attachment: fixed` を使わず素の linear-gradient を敷くと、
+     background は要素(= ドキュメント全高)に対して 100% でスケールするため、
+     「ドキュメント最上部 = グラデ 0%(濃)、最下部 = グラデ 100%(淡)」が連続する。
+   - 色は既存テーマ変数の範囲内(primary = oklch(0.43 0.18 264) を軸にした低彩度
+     ティント)。新色は足さない。下端は完全透明にして素の --background(白)へ溶かす。
+   - stop は上部に密に置き(濃い領域をヒーロー帯に集中)、中盤以降は急速に淡くして
+     本文が読める明るさを確保する。
+   - ヒーローの animated gradient(lp-animated-gradient)はこの連続背景の「濃い最上部」
+     に重なる動きのレイヤーとして残す(主役のヒーローが映える)。
+   ========================================================================== */
+@utility lp-page-gradient {
+  background-image: linear-gradient(
+    to bottom,
+    oklch(0.43 0.18 264 / 0.16) 0%,
+    oklch(0.5 0.16 268 / 0.11) 12%,
+    oklch(0.6 0.13 258 / 0.07) 26%,
+    oklch(0.7 0.1 248 / 0.04) 44%,
+    oklch(0.8 0.07 248 / 0.02) 64%,
+    transparent 82%,
+    transparent 100%
+  );
+  /* 連続背景は要素全高に対して 100%(= ドキュメント全高)で 1 枚描く。
+     animation を持たない静的レイヤー(reduced-motion でも挙動不変)。 */
+  background-repeat: no-repeat;
+}
+
+/* hero の animated gradient 背景。primary を軸にした低彩度グラデを 4 stop で
+   組み、200% サイズにして lp-gradient-pan でゆっくり pan させる。
+   2026-05-29 改修4: 「全体的に背景が薄い」フィードバックに応じ、各 stop の
+   不透明度と彩度を一段引き上げた(0.14→0.24 等)。hue は indigo / 近接 blue の
+   範囲を維持し、新色は足さない(既存 primary 軸の濃淡で奥行きを出す)。
+   2026-05-29 連続グラデ化: ヒーローの濃い帯として残すが、下端を lp-page-gradient へ
+   なめらかに溶かすため、本 gradient の役割は「動きのある最上部レイヤー」に限定。 */
+@utility lp-animated-gradient {
+  background-image: linear-gradient(
+    120deg,
+    oklch(0.43 0.18 264 / 0.24) 0%,
+    oklch(0.55 0.16 280 / 0.18) 28%,
+    oklch(0.7 0.12 230 / 0.14) 55%,
+    oklch(0.43 0.18 264 / 0.24) 100%
+  );
+  background-size: 200% 200%;
+  animation: lp-gradient-pan 18s ease-in-out infinite;
+}
+
+@utility lp-float {
+  animation: lp-float 11s ease-in-out infinite;
+}
+
+@utility lp-blob-drift {
+  animation: lp-blob-drift 14s ease-in-out infinite;
+}
+
+/* tagline 等を「光が一度走る」演出で強調。primary 色のハイライトが横切る。 */
+@utility lp-shimmer-text {
+  background-image: linear-gradient(
+    100deg,
+    var(--foreground) 0%,
+    var(--foreground) 40%,
+    oklch(0.43 0.18 264) 50%,
+    var(--foreground) 60%,
+    var(--foreground) 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: lp-shimmer 6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-animated-gradient,
+  .lp-float,
+  .lp-blob-drift,
+  .lp-shimmer-text {
+    animation: none !important;
+  }
+  /* shimmer は color: transparent のままだと文字が消えるので、reduced-motion
+     では通常色に戻す。 */
+  .lp-shimmer-text {
+    background-image: none;
+    color: var(--foreground);
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+  }
+}
+
+/* =============================================================================
+   2026-05-29: LP セクションの「淡い帯 + ぼかした境目」でリズムを付ける
+   ----------------------------------------------------------------------------
+   背景: 連続グラデ(lp-page-gradient)に統一した結果、ヒーロー以下が「単調な白 +
+   セクションの区切りが無い」状態になった(ユーザー指摘)。一方、以前のハードな
+   色ブロック(bg-muted/40 等の全面ベタ塗り + border-t)は境界に seam(継ぎ目の線)が
+   出て不評だった。
+
+   方針: セクションごとに淡くトーンを変えて「区切りのリズム」を出すが、各帯の上下を
+   必ず transparent へフェードさせて、隣のセクションとの境界に色の段差(線)を作らない。
+   「明 → 淡 → 明」のゆるい呼吸が見えるが、境目の線は無い状態にする。
+
+   実装:
+   - 全面ベタ塗り(bg-muted/40)+ border-t は使わない(これが前回 seam の原因)。
+   - 代わりに section の background-image に「上端 transparent → 中央 faint-tint →
+     下端 transparent」の縦グラデを敷く。tint はセクション中央で最も乗り、上端・下端では
+     完全 transparent になるため、隣接セクションとの境界に色の段差ができない。
+   - tint は非常に淡く(「強い色ブロック」ではなく「ゆるいリズム」)。既存 primary 軸
+     (oklch(0.43 0.18 264))の極低 alpha(0.045)のみ使用。新色は足さない。
+   - lp-page-gradient(ページ全高の連続グラデ)はベースとして維持。本 tint はその上に
+     重なる「フェードする淡い帯」として section に付与する。
+   - section に直接背景を敷くため full-bleed(画面幅いっぱい)で淡く乗る。内側の本文は
+     max-width 中央寄せのまま不変。
+
+   交互配置(リズム): 課題=淡 / 使い方=素 / 機能=淡 / 哲学=素 / CTA=淡。
+   「素」のセクションは tint を付けず、連続グラデ(lp-page-gradient)のまま流す。
+
+   注意:
+   - ヒーロー(lp-animated-gradient + blob + mask)には付けない(最上部の焦点は不変)。
+   - tint は淡いため本文の可読性を落とさない(muted-foreground の文字も読める)。
+   - 静的な背景レイヤー(animation 無し)なので reduced-motion でも挙動不変。
+   ========================================================================== */
+@utility lp-section-tint {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    oklch(0.43 0.18 264 / 0.045) 28%,
+    oklch(0.43 0.18 264 / 0.045) 72%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+}
+
+/* =============================================================================
+   2026-05-29: LP の日本語を文節境界で折り返す(自然改行)
+   ----------------------------------------------------------------------------
+   背景: LP の日本語コピーが既定の英文ベース折り返し規則で「失っ|ていく」のように
+   単語(文節)の途中で改行され読みづらかった。`<html lang="ja">` 配下では
+   `word-break: auto-phrase` がブラウザの形態素境界認識で日本語を文節単位に折り返す。
+   これを LP の文章要素にだけ効かせる。
+
+   スコープ: LP root(app/[locale]/page.tsx の <main>)に `lp-jp-wrap` class を付与し、
+   その子孫の文章要素(見出し h1-h3 / 本文 p / リスト li / インライン span)にのみ
+   適用する。アプリ本体(/app 側)には class を付けないため一切影響しない。
+   LandingHeader / ProblemContrast も <main> 配下にあるため LP のコピー全体が対象。
+
+   ルール:
+   - `word-break: auto-phrase`: 日本語の文節認識折り返し(lang=ja で有効)。en では
+     空白区切りの通常折り返しになるため実害なし(graceful)。
+   - 本文・リスト・インライン span: `text-wrap: pretty`(行末の孤立した 1 文字 = 行末
+     こぼれを抑える)。
+   - 主要見出し(h1-h3): `text-wrap: balance`(複数行見出しの行長を均す)。
+
+   precedence: 既存の per-element utility(text-jp-balance / text-jp-flow が
+   word-break: keep-all / normal を設定)を上書きする必要がある。これらは Tailwind の
+   `@utility`(utilities layer)で定義されるため、本ルールを「レイヤー外の素の CSS」
+   として書くことで cascade layer 規則により確実に勝つ(unlayered > any @layer)。
+   class + 要素型の複合セレクタにしているのも特異度面の保険。
+
+   フォールバック: auto-phrase 非対応ブラウザは値を無視し通常折り返しに戻るだけ
+   (graceful degradation)。text-wrap: pretty / balance も同様に未対応なら無視される。
+   hydration / prefers-reduced-motion 等の既存挙動は不変(これは静的な折り返し規則で
+   JS / animation を含まない)。
+   ========================================================================== */
+.lp-jp-wrap :is(h1, h2, h3, h4, p, li, span) {
+  word-break: auto-phrase;
+}
+
+.lp-jp-wrap :is(p, li, span) {
+  text-wrap: pretty;
+}
+
+.lp-jp-wrap :is(h1, h2, h3, h4) {
+  text-wrap: balance;
+}

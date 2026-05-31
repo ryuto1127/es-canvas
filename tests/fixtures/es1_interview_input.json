@@ -1,0 +1,83 @@
+{
+  "es_body": "20名規模の英語ディベートサークルで、初代女性キャプテンを務めた経験です。当初、大会優勝者ゼロという状況でした。「準備不足」という仮説を立て、過去5大会の優勝者100名分の試合動画を分析し、平均で「反論時の論点整理に1.4秒早い」という共通項を特定しました。これを「3秒以内の論点整理」という具体的トレーニングに落とし込み、毎週木曜20時に30分の特訓を5ヶ月継続しました。当初は出席率40%でしたが、参加メンバーの大会成績が改善するにつれ80%まで上昇しました。結果、私を含む3名が全国大会で入賞し、サークル史上初の快挙となりました。この経験から、データに基づく仮説検証が個人と組織の壁を超える効果を学びました。メルカリの「Go Bold」「データドリブンな意思決定」という指針に共感し、事実に基づいて大胆に挑戦する文化を築きたいと考えています。",
+  "question": {
+    "text": "学生時代に最も力を入れたことを教えてください",
+    "char_limit": 400
+  },
+  "company_summary": {
+    "company_name": "株式会社メルカリ",
+    "business_summary": "C2C マーケットプレイス「メルカリ」を中核に、フリマアプリ・決済(メルペイ)・暗号資産などを展開するテック企業。データに基づく意思決定を重視し、Go Bold(大胆にやろう)を掲げて不確実性の中での挑戦を後押しする文化を持つ。",
+    "evidence": [
+      {
+        "id": "ev_001",
+        "category": "official_value",
+        "claim": "メルカリはバリューの一つに Go Bold を掲げ、大胆な挑戦を奨励している。",
+        "source_url": "https://about.mercari.com/about/",
+        "source_quote": "Go Bold - 大胆にやろう。中途半端なことはやめて、思い切ってやってみよう。",
+        "fetched_at": "2026-05-22T10:00:00.000Z"
+      },
+      {
+        "id": "ev_002",
+        "category": "official_value",
+        "claim": "メルカリは All for One(全ては成功のために)を掲げ、チームで成果に向かう協働を重視している。",
+        "source_url": "https://about.mercari.com/about/",
+        "source_quote": "All for One - 全ては成功のために。一人ひとりが当事者として、チームの成功に貢献しよう。",
+        "fetched_at": "2026-05-22T10:00:00.000Z"
+      },
+      {
+        "id": "ev_003",
+        "category": "hiring_signal",
+        "claim": "メルカリはデータに基づく意思決定を重視し、事実をもとに仮説検証を回せる人材を求めている。",
+        "source_url": "https://careers.mercari.com/",
+        "source_quote": "私たちは勘ではなくデータと向き合い、仮説検証を高速に回しながらプロダクトを進化させています。",
+        "fetched_at": "2026-05-22T10:00:00.000Z"
+      }
+    ],
+    "values": ["Go Bold", "All for One", "Be a Pro", "データドリブン"],
+    "ideal_candidate": "データを起点に意思決定でき、不確実性の中でも大胆に挑戦し続けられる人材。チームの成功を自分ごととして捉え、当事者として協働できる人。",
+    "hiring_criteria": [
+      "データに基づく判断力",
+      "不確実性下での挑戦",
+      "当事者意識",
+      "チームでの協働"
+    ],
+    "research_log": [
+      {
+        "type": "fetch",
+        "url": "https://about.mercari.com/about/",
+        "status": "ok",
+        "extracted_chars": 5400,
+        "ms": 1200,
+        "timestamp": "2026-05-22T10:00:00.000Z"
+      },
+      {
+        "type": "synthesize",
+        "iteration": 2,
+        "timestamp": "2026-05-22T10:00:10.000Z"
+      }
+    ],
+    "source_input": {
+      "type": "url",
+      "value": "https://about.mercari.com/"
+    },
+    "research_started_at": "2026-05-22T09:59:50.000Z",
+    "research_finished_at": "2026-05-22T10:00:10.000Z",
+    "total_iterations": 2
+  },
+  "edit_conditions": {
+    "preset": "バランス",
+    "free_text": ""
+  },
+  "accepted_suggestions_summary": [
+    {
+      "suggestion_id": "sug_002",
+      "direction": "分析プロセスの定量化を採用(優勝者100名分の試合動画分析という具体数値)"
+    },
+    {
+      "suggestion_id": "sug_005",
+      "direction": "規模と役割の明示を採用(初代女性キャプテン + 20名規模)"
+    }
+  ],
+  "user_context": "海外大経験あり、テック系志望",
+  "current_es_version": 2
+}

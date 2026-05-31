@@ -1,0 +1,79 @@
+{
+  "es_body": "カナダ留学先で、誰も注目しない孤立した留学生5人とコーヒーを飲んだ。それが始まりだった。週1回、図書館の隅で雑談していたら、いつの間にか参加者が30人になっていた。私たちはこれを「Coffee Cluster」と名付けた。学生課に正式団体として認められず、予算ゼロから始まったコミュニティだ。何度も場所を追い出された。週末は3軒のカフェを巡り、「学生5人入ります」と頭を下げ続けた。半年後、副学長が直接私を呼び出した。「正式団体にしないか」と。私は断った。「正式になった瞬間、ここは終わる」と思ったからだ。今、Coffee Clusterは私が卒業して2年経っても続いている。創設者の名前は誰も覚えていない。それでいい。組織は人で動くが、文化は人を超えて生きる。三菱商事という看板の重みを、私はこの経験から想像できる。",
+  "question": {
+    "text": "学生時代に最も力を入れたこと",
+    "char_limit": 400
+  },
+  "company_summary": {
+    "company_name": "三菱商事株式会社",
+    "business_summary": "日本最大の総合商社。エネルギー・金属・機械・化学品・食料など多分野で事業展開。人物重視・ストーリー重視の採用姿勢で知られ、長期視点でのキャリア形成を重視する文化を持つ。",
+    "evidence": [
+      {
+        "id": "ev_001",
+        "category": "official_value",
+        "claim": "三菱商事の社是「三綱領」は所期奉公・処事光明・立業貿易の3項目で、長期視点と公正な事業姿勢を重視する。",
+        "source_url": "https://www.mitsubishicorp.com/jp/ja/about/",
+        "source_quote": "三綱領: 所期奉公(期するところは社会への貢献)、処事光明(フェアプレイに徹する)、立業貿易(グローバルな視野で)。",
+        "fetched_at": "2026-05-22T10:30:00.000Z"
+      },
+      {
+        "id": "ev_002",
+        "category": "hiring_signal",
+        "claim": "三菱商事は採用において、個人の人物像とそれを支えるストーリー・原体験を重視する姿勢を表明している。",
+        "source_url": "https://www.mitsubishicorp.com/jp/ja/career/",
+        "source_quote": "私たちは、これまでの経験で培ってきた強みやその背景にあるストーリーを大切にしています。",
+        "fetched_at": "2026-05-22T10:30:00.000Z"
+      },
+      {
+        "id": "ev_003",
+        "category": "culture_signal",
+        "claim": "三菱商事の社員は「人を介して事業をつくる」発想を重視し、組織横断の信頼関係構築を仕事の核に置く。",
+        "source_url": "https://www.mitsubishicorp.com/jp/ja/about/people/",
+        "source_quote": "事業はモノでも資本でもなく、人を介してつくる。そう信じる仲間と仕事をすることが、三菱商事で働く意味です。",
+        "fetched_at": "2026-05-22T10:30:00.000Z"
+      }
+    ],
+    "values": ["所期奉公", "処事光明", "立業貿易"],
+    "ideal_candidate": "原体験を持ち、それを言語化できる人物。長期視点で人と組織を動かし、信頼を前提に事業を立ち上げられる人。",
+    "hiring_criteria": [
+      "原体験とその言語化",
+      "人を巻き込む力",
+      "長期視点での思考",
+      "ストーリーとしての一貫性"
+    ],
+    "research_log": [
+      {
+        "type": "fetch",
+        "url": "https://www.mitsubishicorp.com/jp/ja/about/",
+        "status": "ok",
+        "extracted_chars": 4800,
+        "ms": 1500,
+        "timestamp": "2026-05-22T10:30:00.000Z"
+      },
+      {
+        "type": "synthesize",
+        "iteration": 3,
+        "timestamp": "2026-05-22T10:30:15.000Z"
+      }
+    ],
+    "source_input": {
+      "type": "name",
+      "value": "三菱商事"
+    },
+    "research_started_at": "2026-05-22T10:29:50.000Z",
+    "research_finished_at": "2026-05-22T10:30:15.000Z",
+    "total_iterations": 3
+  },
+  "edit_conditions": {
+    "preset": "個性保護",
+    "free_text": "自分の声を残したい"
+  },
+  "accepted_suggestions_summary": [
+    {
+      "suggestion_id": "sug_007",
+      "direction": "孤立の理由(言語の壁、文化的疎外感)を1文補強する convention 提案を採用"
+    }
+  ],
+  "user_context": "起業経験あり、文学部、書き手としての自意識強め",
+  "current_es_version": 2
+}
