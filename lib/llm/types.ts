@@ -5,6 +5,7 @@ import type {
 } from "../schema/input";
 import type { AnalysisResult } from "../schema/analysis";
 import type { InterviewQuestions } from "../schema/interview";
+import type { CaptureMeta } from "./capture_meta";
 
 // Phase G Step 3b-2 (2026-05-23): partial を追加。同期 analyze() では未サポート、
 // streaming(analyzePartialStream)経路のみ呼べる(route が input.mode で分岐)。
@@ -31,11 +32,24 @@ export type InterviewInput = InterviewInputBundle;
 // プロバイダ共通インタフェース。
 // Phase C: analyze は AnalyzeInputBundle を直接受ける(mode は bundle.mode に内包)。
 // 引数の mode は呼び出し側の意図表明として残すが、AnalyzeInputBundle.mode と一致しなければエラー。
+//
+// 提出後改善 #3 準備 (2026-06-09): researchCompany / generateInterview に optional な
+// onMeta callback を追加(受動計測メタの伝搬、additive)。戻り値の CompanySummary /
+// InterviewQuestions は Zod 検証済の契約型でありメタを混ぜられないため、out-of-band の
+// callback で route に渡す。実装が onMeta を無視しても契約違反にならない
+// (Anthropic / Google は引数の少ない既存シグネチャのまま適合する。Anthropic は
+// 凍結方針どおり本 dispatch では計測を実装しない)。
 export interface LLMProvider {
   readonly name: "anthropic" | "openai" | "google";
-  researchCompany(input: ResearchInputSource): Promise<CompanySummary>;
+  researchCompany(
+    input: ResearchInputSource,
+    onMeta?: (meta: CaptureMeta) => void,
+  ): Promise<CompanySummary>;
   analyze(input: AnalyzeInput, mode: AnalyzeMode): Promise<AnalysisResult>;
-  generateInterview(input: InterviewInput): Promise<InterviewQuestions>;
+  generateInterview(
+    input: InterviewInput,
+    onMeta?: (meta: CaptureMeta) => void,
+  ): Promise<InterviewQuestions>;
 }
 
 // LLM レイヤーのエラー型。/api/* で HTTP ステータスにマッピング

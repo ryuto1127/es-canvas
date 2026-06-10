@@ -215,6 +215,9 @@ export async function POST(req: NextRequest) {
                   type: "completed",
                   kind: "partial",
                   result: finalCheck.data,
+                  // 提出後改善 #3 準備 (2026-06-09): 受動計測メタの pass-through
+                  // (optional、undefined なら JSON.stringify が落とす = 従来形のまま)。
+                  capture_meta: event.capture_meta,
                 }),
               );
               break;
@@ -243,6 +246,8 @@ export async function POST(req: NextRequest) {
                 type: "completed",
                 kind: "full",
                 result: finalCheck.data,
+                // 提出後改善 #3 準備 (2026-06-09): 受動計測メタの pass-through(optional)。
+                capture_meta: event.capture_meta,
               }),
             );
             break;

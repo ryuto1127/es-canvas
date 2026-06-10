@@ -50,6 +50,8 @@ import {
   getDerivedEsBody,
   useAnalyzeStore,
 } from "@/lib/state/analyze_store";
+// 提出後改善 #3 準備 (2026-06-09): /api/interview 応答の optional `capture_meta`。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 import { openAIKeyHeader, requestOpenSettings } from "@/lib/byok";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -173,7 +175,11 @@ export function InterviewPanel({ questions }: InterviewPanelProps) {
         return;
       }
 
-      const okBody = await res.json();
+      const okBody = (await res.json()) as {
+        data?: unknown;
+        // 提出後改善 #3 準備 (2026-06-09): optional の受動計測メタ(additive)。
+        capture_meta?: CaptureMeta;
+      };
       // route は { data: InterviewQuestions } を返す。client 側でも Zod で二重検証する。
       const parsed = InterviewQuestionsSchema.safeParse(okBody?.data);
       if (!parsed.success) {
@@ -183,7 +189,8 @@ export function InterviewPanel({ questions }: InterviewPanelProps) {
         });
         return;
       }
-      applyInterviewQuestions(parsed.data);
+      // 提出後改善 #3 準備 (2026-06-09): captureMeta(あれば)を capture エントリに同梱。
+      applyInterviewQuestions(parsed.data, okBody?.capture_meta);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Network error";
       setInterviewRefreshError({ kind: "network", message });

@@ -104,6 +104,7 @@
 import * as React from "react";
 import { useTranslations } from "next-intl";
 import {
+  appendCaptureMetaEntry,
   buildClarificationEnrichedIntent,
   buildPartialBundle,
   buildRefreshBundle,
@@ -115,6 +116,8 @@ import {
   reconcileSpansToDisplayedText,
   useAnalyzeStore,
 } from "@/lib/state/analyze_store";
+// 提出後改善 #3 準備 (2026-06-09): /api/semantic-diff 応答の optional `capture_meta`。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 import { callAnalyzeStream } from "@/lib/concurrency/analyze_stream";
 import { openAIKeyHeader, requestOpenSettings } from "@/lib/byok";
 import type { Category, DisplayPriority, Suggestion } from "@/lib/schema/suggestion";
@@ -861,7 +864,8 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
       if (result.ok) {
         if (result.kind === "partial") {
           // 提出後改善 #2 (2026-06-09): consumedScope を渡して scope を reference-equality 消化。
-          applyPartialResult(result.result, consumedScope);
+          // 提出後改善 #3 準備 (2026-06-09): captureMeta(あれば)を capture エントリに同梱。
+          applyPartialResult(result.result, consumedScope, result.captureMeta);
           // 2026-05-25 Task #18: 1.5 秒の fade out animation 後に deleted を suggestions から
           // 実除外 + recently* / seed flags をクリア。Inviolable constraints:
           // 「すべての操作は Undo 可能」を満たすため、fade out 中も Undo / 履歴 revert で
@@ -874,7 +878,8 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
           }, 1500);
         } else {
           // 提出後改善 #2 (2026-06-09): consumedScope を渡して scope を reference-equality 消化。
-          applyRefreshResult(result.result, consumedScope);
+          // 提出後改善 #3 準備 (2026-06-09): captureMeta(あれば)を capture エントリに同梱。
+          applyRefreshResult(result.result, consumedScope, result.captureMeta);
         }
         // apply* が成功時に inflight / abort / phase をクリーンアップ
         // (古いバージョン破棄ケースでも no-op で抜けるが、ユーザー観測上はクリーン)
@@ -1081,10 +1086,17 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
           try {
             const json = (await res.json()) as {
               data?: { semantically_same?: boolean; reason?: string };
+              capture_meta?: CaptureMeta;
             };
             if (typeof json.data?.semantically_same === "boolean") {
               semanticSame = json.data.semantically_same;
               reason = json.data.reason ?? "理由情報なし";
+            }
+            // 提出後改善 #3 準備 (2026-06-09): semantic_diff 経路の受動計測(dev 専用
+            // capture)。capture_meta が付いた応答(= 実 LLM call があった、before===after の
+            // 早期判定や API error の fail-safe でない)のみ記録する。
+            if (json.capture_meta) {
+              appendCaptureMetaEntry("semantic_diff", json.capture_meta);
             }
           } catch {
             // parse 失敗 → fail-safe

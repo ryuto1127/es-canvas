@@ -49,6 +49,7 @@ import {
   AnalyzeInputBundleSchema,
 } from "@/lib/schema/input";
 import {
+  appendCaptureMetaEntry,
   buildAnalyzeBundle,
   isFormValid,
   isLoadingPhase,
@@ -60,6 +61,8 @@ import {
   type StreamingStage,
 } from "@/lib/state/analyze_store";
 import type { AnalysisResult } from "@/lib/schema/analysis";
+// 提出後改善 #3 準備 (2026-06-09): サーバ応答の optional `capture_meta`(受動計測メタ)。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 import type { CompanySummary } from "@/lib/schema/company";
 import {
   openAIKeyHeader,
@@ -133,8 +136,10 @@ const FETCH_TIMEOUT_MS = 330_000;
 //
 // Phase E 拡張(2026-05-23): 入力経路を 3 種に拡張(url / name / freetext)。
 // payload の組み立ては input_type に応じて key を切り替える(url / name / value)。
+// 提出後改善 #3 準備 (2026-06-09): capture_meta は optional の additive フィールド
+// (キャッシュヒット / 旧サーバでは付かない、parse は壊れない)。
 type ResearchResponse =
-  | { data: CompanySummary; cached?: boolean }
+  | { data: CompanySummary; cached?: boolean; capture_meta?: CaptureMeta }
   | { error: ServerError };
 
 type ResearchPayload =
@@ -145,7 +150,7 @@ type ResearchPayload =
 async function callResearch(
   payload: ResearchPayload,
 ): Promise<
-  | { ok: true; summary: CompanySummary }
+  | { ok: true; summary: CompanySummary; captureMeta?: CaptureMeta }
   | { ok: false; error: ServerError }
 > {
   let res: Response;
@@ -198,7 +203,8 @@ async function callResearch(
     };
   }
 
-  return { ok: true, summary: body.data };
+  // 提出後改善 #3 準備 (2026-06-09): capture_meta を pass-through(あれば)。
+  return { ok: true, summary: body.data, captureMeta: body.capture_meta };
 }
 
 // =============================================================================
@@ -216,12 +222,13 @@ async function callResearch(
 //  - parser はシンプルに、improved buffer 行き帰り(`\n\n` で event 区切り)
 //
 // SSE payload 型(anthropic.ts:AnalyzeStreamEvent と同形、独立宣言で client / server を結合)
+// 提出後改善 #3 準備 (2026-06-09): completed に optional capture_meta(additive)。
 type AnalyzeStreamPayload =
   | { type: "started"; mode: "initial"; model: string; attempt: number }
   | { type: "thinking"; delta: string }
   | { type: "tool_progress"; cumulativeChars: number }
   | { type: "retry"; issueKinds: string[] }
-  | { type: "completed"; result: AnalysisResult }
+  | { type: "completed"; result: AnalysisResult; capture_meta?: CaptureMeta }
   | {
       type: "error";
       kind: string;
@@ -234,7 +241,7 @@ async function callAnalyzeStream(
   input: ReturnType<typeof buildAnalyzeBundle>,
   onStage: (stage: StreamingStage) => void,
 ): Promise<
-  | { ok: true; result: AnalysisResult }
+  | { ok: true; result: AnalysisResult; captureMeta?: CaptureMeta }
   | { ok: false; error: ServerError }
 > {
   // 送信前 Zod 検証(JSON 版と同じ規律)
@@ -311,6 +318,8 @@ async function callAnalyzeStream(
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   let lastResult: AnalysisResult | null = null;
+  // 提出後改善 #3 準備 (2026-06-09): completed event の optional 受動計測メタ。
+  let lastCaptureMeta: CaptureMeta | undefined;
   let lastError: ServerError | null = null;
 
   try {
@@ -369,6 +378,7 @@ async function callAnalyzeStream(
           case "completed":
             onStage("finalizing");
             lastResult = payload.result;
+            lastCaptureMeta = payload.capture_meta;
             break;
           case "error":
             lastError = {
@@ -399,7 +409,7 @@ async function callAnalyzeStream(
     return { ok: false, error: lastError };
   }
   if (lastResult) {
-    return { ok: true, result: lastResult };
+    return { ok: true, result: lastResult, captureMeta: lastCaptureMeta };
   }
   // completed も error も来ずに stream が終了 = サーバ側の異常終了
   return {
@@ -783,6 +793,11 @@ export function InputForm({ hasServerKey }: { hasServerKey: boolean }) {
       if (r.ok) {
         summary = r.summary;
         setCompanySummary(r.summary);
+        // 提出後改善 #3 準備 (2026-06-09): research 経路の受動計測(dev 専用 capture)。
+        // capture_meta が付いた応答(= 実 LLM call があった、キャッシュヒットでない)のみ。
+        if (r.captureMeta) {
+          appendCaptureMetaEntry("research", r.captureMeta);
+        }
       } else {
         // research 失敗は致命的ではない、ソフトエラーとして残し analyze に続行
         setResearchError(r.error);
@@ -801,7 +816,8 @@ export function InputForm({ hasServerKey }: { hasServerKey: boolean }) {
       setStreamingStage(stage),
     );
     if (a.ok) {
-      setAnalysisResult(a.result);
+      // 提出後改善 #3 準備 (2026-06-09): captureMeta(あれば)を capture エントリに同梱。
+      setAnalysisResult(a.result, a.captureMeta);
     } else {
       setAnalyzeError(a.error);
     }

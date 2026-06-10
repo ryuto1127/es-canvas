@@ -100,6 +100,14 @@ import {
 } from "./interview_helpers";
 import { resolveOriginalSpans } from "../utils/es_anchor";
 import type { AnalyzeStreamEvent } from "./anthropic";
+// 提出後改善 #3 準備 (2026-06-09): 経路別の受動計測メタ(usage / レイテンシ / リトライ回数)。
+// completed event / onMeta callback に optional で載せる(additive、既存契約は不変)。
+import {
+  accumulateCaptureUsage,
+  buildCaptureMeta,
+  type CaptureMeta,
+  type CaptureUsage,
+} from "./capture_meta";
 
 // DECISION [2026-05-22 セッション4]: research の主モデルを GPT-5.4 mini → GPT-5.4 (full) に昇格。
 // 統合改修パッケージ (2026-05-25): provider 完全統一に伴い、analyze / refresh / interview も
@@ -229,11 +237,16 @@ export class OpenAIProvider implements LLMProvider {
     this.client = new OpenAI({ apiKey: key });
   }
 
-  async researchCompany(input: ResearchInputSource): Promise<CompanySummary> {
+  // 提出後改善 #3 準備 (2026-06-09): optional onMeta callback で受動計測メタを返す
+  // (additive。戻り値 CompanySummary は Zod 検証済の契約型なのでメタを混ぜない)。
+  async researchCompany(
+    input: ResearchInputSource,
+    onMeta?: (meta: CaptureMeta) => void,
+  ): Promise<CompanySummary> {
     // Phase E 拡張(2026-05-23): 自由テキスト経路はエージェントループ無し、submit_summary 単発。
     // 防衛三段の自由テキスト版を validateFreetextSummary + buildFreetextRetryMessage が担う。
     if (input.type === "freetext") {
-      return this.researchFreetext(input.value);
+      return this.researchFreetext(input.value, onMeta);
     }
 
     const startedAt = new Date().toISOString();
@@ -268,6 +281,11 @@ export class OpenAIProvider implements LLMProvider {
     // セッション4 ハードニング(Part D): submit_summary の Zod 検証が落ちたら1回だけリトライ。
     // 2回目も失敗したら 503。新規 iteration は消費しない(continue 前に iteration-- する)。
     let retryAttempted = false;
+    // 提出後改善 #3 準備 (2026-06-09): 受動計測。エージェントループの全 LLM call の
+    // usage / レイテンシを累計する(fetch_page / web_search の外部取得時間は含めない)。
+    let captureUsage: CaptureUsage | null = null;
+    let captureLatencyMs = 0;
+    let captureRetryCount = 0;
 
     for (let iteration = 1; iteration <= MAX_AGENT_ITERATIONS; iteration++) {
       // MAX_SEARCHES 超過後は web_search を tools から外して、続けて検索を要求されないようにする。
@@ -277,6 +295,8 @@ export class OpenAIProvider implements LLMProvider {
       tools.push(FETCH_PAGE_TOOL_OAI, SUBMIT_SUMMARY_TOOL_OAI);
 
       let response: OpenAI.Responses.Response;
+      // 提出後改善 #3 準備 (2026-06-09): LLM call の実測レイテンシ(成功時のみ累計)。
+      const llmCallStartedAt = Date.now();
       try {
         response = await this.client.responses.create({
           model: MODEL_RESEARCH,
@@ -308,6 +328,8 @@ export class OpenAIProvider implements LLMProvider {
         }
         throw new LLMError("unknown", "Unknown OpenAI SDK error", err);
       }
+      captureLatencyMs += Date.now() - llmCallStartedAt;
+      captureUsage = accumulateCaptureUsage(captureUsage, response.usage);
 
       previousResponseId = response.id;
 
@@ -418,11 +440,23 @@ export class OpenAIProvider implements LLMProvider {
         );
 
         if (validation.ok) {
+          // 提出後改善 #3 準備 (2026-06-09): 成功時のみ計測メタを通知(失敗 / throw 経路は
+          // 応答がユーザーに届かないため記録しない)。
+          onMeta?.(
+            buildCaptureMeta({
+              mode: "research",
+              model: MODEL_RESEARCH,
+              latencyMs: captureLatencyMs,
+              usage: captureUsage,
+              retryCount: captureRetryCount,
+            }),
+          );
           return validation.data;
         }
 
         if (!retryAttempted) {
           retryAttempted = true;
+          captureRetryCount += 1;
           const approvedUrls = getApprovedUrls(researchLog);
           const retryMessage = buildRetryMessage(validation.error, approvedUrls);
 
@@ -526,7 +560,11 @@ export class OpenAIProvider implements LLMProvider {
 
   // Phase E 拡張(2026-05-23): 自由テキスト経路。Anthropic 側と意味的に同一の構造。
   // submit_summary 単発呼び出し + 検証失敗時 1 回リトライ。エージェントループ無し。
-  private async researchFreetext(freetext: string): Promise<CompanySummary> {
+  // 提出後改善 #3 準備 (2026-06-09): optional onMeta callback(researchCompany と同じ規律)。
+  private async researchFreetext(
+    freetext: string,
+    onMeta?: (meta: CaptureMeta) => void,
+  ): Promise<CompanySummary> {
     const startedAt = new Date().toISOString();
     const researchLog: ResearchLogEntry[] = [];
     const sourceInput: ResearchInputSource = {
@@ -540,9 +578,14 @@ export class OpenAIProvider implements LLMProvider {
     ];
     let previousResponseId: string | undefined = undefined;
     let retryAttempted = false;
+    // 提出後改善 #3 準備 (2026-06-09): 受動計測(usage / レイテンシ累計 + リトライ回数)。
+    let captureUsage: CaptureUsage | null = null;
+    let captureLatencyMs = 0;
+    let captureRetryCount = 0;
 
     for (let attempt = 0; attempt < 2; attempt++) {
       let response: OpenAI.Responses.Response;
+      const llmCallStartedAt = Date.now();
       try {
         response = await this.client.responses.create({
           model: MODEL_RESEARCH,
@@ -570,6 +613,8 @@ export class OpenAIProvider implements LLMProvider {
         }
         throw new LLMError("unknown", "Unknown OpenAI SDK error", err);
       }
+      captureLatencyMs += Date.now() - llmCallStartedAt;
+      captureUsage = accumulateCaptureUsage(captureUsage, response.usage);
 
       previousResponseId = response.id;
 
@@ -621,6 +666,16 @@ export class OpenAIProvider implements LLMProvider {
       );
 
       if (validation.ok) {
+        // 提出後改善 #3 準備 (2026-06-09): 成功時のみ計測メタを通知。
+        onMeta?.(
+          buildCaptureMeta({
+            mode: "research",
+            model: MODEL_RESEARCH,
+            latencyMs: captureLatencyMs,
+            usage: captureUsage,
+            retryCount: captureRetryCount,
+          }),
+        );
         return validation.data;
       }
 
@@ -637,6 +692,7 @@ export class OpenAIProvider implements LLMProvider {
       }
 
       retryAttempted = true;
+      captureRetryCount += 1;
       const retryMessage = buildFreetextRetryMessage(validation.error);
       console.warn(
         `[OpenAIProvider.researchFreetext] retry triggered (${validation.error.kind})`,
@@ -754,8 +810,12 @@ export class OpenAIProvider implements LLMProvider {
 
   // 統合改修パッケージ (2026-05-25): /api/interview 経路の本実装。
   // Anthropic 経路 `generateInterviewImpl` と意味的に同形(防衛三段 + 1 回リトライ)。
-  async generateInterview(input: InterviewInput): Promise<InterviewQuestions> {
-    return generateInterviewOpenAI(this.client, input);
+  // 提出後改善 #3 準備 (2026-06-09): optional onMeta callback(受動計測メタ、additive)。
+  async generateInterview(
+    input: InterviewInput,
+    onMeta?: (meta: CaptureMeta) => void,
+  ): Promise<InterviewQuestions> {
+    return generateInterviewOpenAI(this.client, input, onMeta);
   }
 }
 
@@ -1198,6 +1258,11 @@ async function* analyzeInitialStreamingOpenAI(
 
   let retryAttempted = false;
   let totalUsage: TotalUsage = { input: 0, output: 0 };
+  // 提出後改善 #3 準備 (2026-06-09): 受動計測(usage / レイテンシ累計 + リトライ回数)。
+  // completed event の optional `capture_meta` に載せる(additive、SSE 契約は不変)。
+  let captureUsage: CaptureUsage | null = null;
+  let captureLatencyMs = 0;
+  let captureRetryCount = 0;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     yield {
@@ -1208,6 +1273,7 @@ async function* analyzeInitialStreamingOpenAI(
     };
 
     let response: OpenAI.Responses.Response;
+    const llmCallStartedAt = Date.now();
     try {
       // 提出後改善 #2 (2026-06-09): streaming で呼び signal を末端まで伝搬(課金停止)。
       // body / final response 形は非 streaming `responses.create` と同一。
@@ -1235,6 +1301,8 @@ async function* analyzeInitialStreamingOpenAI(
       yield* yieldOpenAIError(err, "analyze_initial_stream");
       return;
     }
+    captureLatencyMs += Date.now() - llmCallStartedAt;
+    captureUsage = accumulateCaptureUsage(captureUsage, response.usage);
 
     totalUsage = accumulateUsage(totalUsage, response.usage);
 
@@ -1312,7 +1380,19 @@ async function* analyzeInitialStreamingOpenAI(
         };
         return;
       }
-      yield { type: "completed", kind: "full", result };
+      // 提出後改善 #3 準備 (2026-06-09): 計測メタを completed に同梱(optional、additive)。
+      yield {
+        type: "completed",
+        kind: "full",
+        result,
+        capture_meta: buildCaptureMeta({
+          mode: "initial",
+          model: MODEL_ANALYZE,
+          latencyMs: captureLatencyMs,
+          usage: captureUsage,
+          retryCount: captureRetryCount,
+        }),
+      };
       return;
     }
 
@@ -1338,6 +1418,7 @@ async function* analyzeInitialStreamingOpenAI(
     }
 
     retryAttempted = true;
+    captureRetryCount += 1;
     const issueKinds = validation.issues.map((i) => i.kind);
     yield { type: "retry", issueKinds };
 
@@ -1417,6 +1498,10 @@ async function* analyzeRefreshStreamingOpenAI(
 
   let retryAttempted = false;
   let totalUsage: TotalUsage = { input: 0, output: 0 };
+  // 提出後改善 #3 準備 (2026-06-09): 受動計測(usage / レイテンシ累計 + リトライ回数)。
+  let captureUsage: CaptureUsage | null = null;
+  let captureLatencyMs = 0;
+  let captureRetryCount = 0;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     yield {
@@ -1427,6 +1512,7 @@ async function* analyzeRefreshStreamingOpenAI(
     };
 
     let response: OpenAI.Responses.Response;
+    const llmCallStartedAt = Date.now();
     try {
       // 提出後改善 #2 (2026-06-09): streaming で呼び signal を末端まで伝搬(課金停止)。
       response = await runResponseStream(
@@ -1453,6 +1539,8 @@ async function* analyzeRefreshStreamingOpenAI(
       yield* yieldOpenAIError(err, "analyze_refresh_stream");
       return;
     }
+    captureLatencyMs += Date.now() - llmCallStartedAt;
+    captureUsage = accumulateCaptureUsage(captureUsage, response.usage);
 
     totalUsage = accumulateUsage(totalUsage, response.usage);
 
@@ -1530,7 +1618,19 @@ async function* analyzeRefreshStreamingOpenAI(
         };
         return;
       }
-      yield { type: "completed", kind: "full", result };
+      // 提出後改善 #3 準備 (2026-06-09): 計測メタを completed に同梱(optional、additive)。
+      yield {
+        type: "completed",
+        kind: "full",
+        result,
+        capture_meta: buildCaptureMeta({
+          mode: "refresh",
+          model: MODEL_REFRESH,
+          latencyMs: captureLatencyMs,
+          usage: captureUsage,
+          retryCount: captureRetryCount,
+        }),
+      };
       return;
     }
 
@@ -1556,6 +1656,7 @@ async function* analyzeRefreshStreamingOpenAI(
     }
 
     retryAttempted = true;
+    captureRetryCount += 1;
     const issueKinds = validation.issues.map((i) => i.kind);
     yield { type: "retry", issueKinds };
 
@@ -1641,6 +1742,11 @@ async function* analyzePartialStreamingOpenAI(
 
   let retryAttempted = false;
   let totalUsage: TotalUsage = { input: 0, output: 0 };
+  // 提出後改善 #3 準備 (2026-06-09): 受動計測(usage / レイテンシ累計 + リトライ回数)。
+  // partial 経路の軽量化判断(改善 #3 本体)の主要な実測データ源。
+  let captureUsage: CaptureUsage | null = null;
+  let captureLatencyMs = 0;
+  let captureRetryCount = 0;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     yield {
@@ -1651,6 +1757,7 @@ async function* analyzePartialStreamingOpenAI(
     };
 
     let response: OpenAI.Responses.Response;
+    const llmCallStartedAt = Date.now();
     try {
       // 提出後改善 #2 (2026-06-09): streaming で呼び signal を末端まで伝搬(課金停止)。
       response = await runResponseStream(
@@ -1677,6 +1784,8 @@ async function* analyzePartialStreamingOpenAI(
       yield* yieldOpenAIError(err, "analyze_partial_stream");
       return;
     }
+    captureLatencyMs += Date.now() - llmCallStartedAt;
+    captureUsage = accumulateCaptureUsage(captureUsage, response.usage);
 
     totalUsage = accumulateUsage(totalUsage, response.usage);
 
@@ -1754,7 +1863,19 @@ async function* analyzePartialStreamingOpenAI(
         };
         return;
       }
-      yield { type: "completed", kind: "partial", result };
+      // 提出後改善 #3 準備 (2026-06-09): 計測メタを completed に同梱(optional、additive)。
+      yield {
+        type: "completed",
+        kind: "partial",
+        result,
+        capture_meta: buildCaptureMeta({
+          mode: "partial",
+          model: MODEL_REFRESH,
+          latencyMs: captureLatencyMs,
+          usage: captureUsage,
+          retryCount: captureRetryCount,
+        }),
+      };
       return;
     }
 
@@ -1780,6 +1901,7 @@ async function* analyzePartialStreamingOpenAI(
     }
 
     retryAttempted = true;
+    captureRetryCount += 1;
     const issueKinds = validation.issues.map((i) => i.kind);
     yield { type: "retry", issueKinds };
 
@@ -1831,6 +1953,8 @@ async function* analyzePartialStreamingOpenAI(
 async function generateInterviewOpenAI(
   client: OpenAI,
   input: InterviewInputBundle,
+  // 提出後改善 #3 準備 (2026-06-09): 受動計測メタの out-of-band callback(optional)。
+  onMeta?: (meta: CaptureMeta) => void,
 ): Promise<InterviewQuestions> {
   const realUserMessage = buildInterviewUserMessage(input);
 
@@ -1856,9 +1980,14 @@ async function generateInterviewOpenAI(
 
   let retryAttempted = false;
   let totalUsage: TotalUsage = { input: 0, output: 0 };
+  // 提出後改善 #3 準備 (2026-06-09): 受動計測(usage / レイテンシ累計 + リトライ回数)。
+  let captureUsage: CaptureUsage | null = null;
+  let captureLatencyMs = 0;
+  let captureRetryCount = 0;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     let response: OpenAI.Responses.Response;
+    const llmCallStartedAt = Date.now();
     try {
       response = await client.responses.create({
         model: MODEL_INTERVIEW,
@@ -1886,6 +2015,8 @@ async function generateInterviewOpenAI(
       }
       throw new LLMError("unknown", "Unknown OpenAI SDK error", err);
     }
+    captureLatencyMs += Date.now() - llmCallStartedAt;
+    captureUsage = accumulateCaptureUsage(captureUsage, response.usage);
 
     totalUsage = accumulateUsage(totalUsage, response.usage);
 
@@ -1923,6 +2054,16 @@ async function generateInterviewOpenAI(
 
     const validation = validateInterviewOutput(parsedArgs, input);
     if (validation.ok) {
+      // 提出後改善 #3 準備 (2026-06-09): 成功時のみ計測メタを通知。
+      onMeta?.(
+        buildCaptureMeta({
+          mode: "interview",
+          model: MODEL_INTERVIEW,
+          latencyMs: captureLatencyMs,
+          usage: captureUsage,
+          retryCount: captureRetryCount,
+        }),
+      );
       return assembleInterviewResultOpenAI(input, validation.data, totalUsage);
     }
 
@@ -1941,6 +2082,7 @@ async function generateInterviewOpenAI(
     }
 
     retryAttempted = true;
+    captureRetryCount += 1;
     const retryMessage = buildInterviewRetryMessage(validation.issues);
     console.warn(
       "[OpenAIProvider.generateInterview] retry triggered",

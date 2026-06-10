@@ -20,6 +20,13 @@
 import OpenAI from "openai";
 import { MODEL_SEMANTIC_DIFF } from "./openai";
 import { resolveOpenAIKey } from "./openai_key";
+// 提出後改善 #3 準備 (2026-06-09): 受動計測メタ(usage / レイテンシ)。LLM call が
+// 実際に完了したときのみ onMeta で通知する(early return / API error 経路では通知しない)。
+import {
+  accumulateCaptureUsage,
+  buildCaptureMeta,
+  type CaptureMeta,
+} from "./capture_meta";
 
 // 意味的差分判定の結果型。
 export interface SemanticDiffResult {
@@ -113,10 +120,14 @@ function getClient(apiKey?: string): OpenAI {
 //  - before: 編集前の文字列(suggestion.proposed / 直接編集前の本文 等)
 //  - after:  ユーザーが採用 / 編集した最終文字列
 //  - apiKey: BYOK の per-request 鍵(省略時は env fallback)
+//  - onMeta: 受動計測メタの callback(提出後改善 #3 準備 2026-06-09、optional)。
+//            LLM call が完了した(応答を受け取った)ときのみ呼ばれる。before === after の
+//            早期判定や API error 経路では呼ばれない(計測対象の LLM call が無い / 不完全)。
 export async function judgeSemanticDiff(
   before: string,
   after: string,
   apiKey?: string,
+  onMeta?: (meta: CaptureMeta) => void,
 ): Promise<SemanticDiffResult> {
   // 自明な早期決定: before === after なら確実に同じ(API を呼ぶ必要なし)
   if (before === after) {
@@ -151,6 +162,8 @@ export async function judgeSemanticDiff(
   }
 
   try {
+    // 提出後改善 #3 準備 (2026-06-09): LLM call の実測レイテンシ。
+    const llmCallStartedAt = Date.now();
     const response = await client.responses.create({
       model: MODEL_SEMANTIC_DIFF,
       input: [{ role: "user", content: userMessage }],
@@ -161,6 +174,18 @@ export async function judgeSemanticDiff(
       // reasoning model でも mini は effort low で十分(2 文比較は楽勝)
       reasoning: { effort: "low" },
     });
+    // 応答を受け取った時点で計測メタを通知(parse 失敗 / tool 未呼び出しの fail-safe
+    // 経路でもトークンは消費されているため、ここで通知するのが実コストに忠実)。
+    // 本経路はリトライ無し(1 リクエスト = 1 LLM call)なので retry_count は常に 0。
+    onMeta?.(
+      buildCaptureMeta({
+        mode: "semantic_diff",
+        model: MODEL_SEMANTIC_DIFF,
+        latencyMs: Date.now() - llmCallStartedAt,
+        usage: accumulateCaptureUsage(null, response.usage),
+        retryCount: 0,
+      }),
+    );
 
     for (const item of response.output) {
       if (item.type === "function_call" && item.name === JUDGE_TOOL_NAME) {

@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getProvider } from "@/lib/llm/router";
 import { LLMError } from "@/lib/llm/types";
+// 提出後改善 #3 準備 (2026-06-09): 受動計測メタ(JSON 応答の optional フィールドで伝搬)。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 import {
   OPENAI_KEY_HEADER,
   tryResolveOpenAIKey,
@@ -181,9 +183,14 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. エージェント呼び出し(内部で web_search / fetch_page を回す)
+  // 提出後改善 #3 準備 (2026-06-09): onMeta callback で受動計測メタを受け取る
+  // (OpenAI provider のみ通知。キャッシュヒット時は LLM call が無いため当然付かない)。
+  let captureMeta: CaptureMeta | undefined;
   let summary: CompanySummary;
   try {
-    summary = await provider.researchCompany(input);
+    summary = await provider.researchCompany(input, (meta) => {
+      captureMeta = meta;
+    });
   } catch (err) {
     if (err instanceof LLMError) {
       if (err.kind === "schema_validation") {
@@ -254,8 +261,10 @@ export async function POST(req: NextRequest) {
   // 5. キャッシュ保存
   COMPANY_CACHE.set(cacheKey, { value: finalCheck.data, cached_at: Date.now() });
 
+  // 提出後改善 #3 準備 (2026-06-09): capture_meta は optional の additive フィールド
+  // (undefined なら JSON serialization で落ちる = 従来の { data, cached } 形のまま)。
   return NextResponse.json(
-    { data: finalCheck.data, cached: false },
+    { data: finalCheck.data, cached: false, capture_meta: captureMeta },
     {
       status: 200,
       headers: { "X-Cache": "MISS" },

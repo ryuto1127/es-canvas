@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider } from "@/lib/llm/router";
 import { LLMError } from "@/lib/llm/types";
+// 提出後改善 #3 準備 (2026-06-09): 受動計測メタ(JSON 応答の optional フィールドで伝搬)。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 import {
   OPENAI_KEY_HEADER,
   tryResolveOpenAIKey,
@@ -76,9 +78,14 @@ export async function POST(req: NextRequest) {
   const provider = getProvider("interview", openaiKey);
 
   // 4. 面接質問生成(provider 内部で防衛三段 + 1回リトライ)
+  // 提出後改善 #3 準備 (2026-06-09): onMeta callback で受動計測メタを受け取る
+  // (OpenAI provider のみ通知、Anthropic / Google は undefined のまま)。
+  let captureMeta: CaptureMeta | undefined;
   let result: InterviewQuestions;
   try {
-    result = await provider.generateInterview(input);
+    result = await provider.generateInterview(input, (meta) => {
+      captureMeta = meta;
+    });
   } catch (err) {
     if (err instanceof LLMError) {
       if (err.kind === "schema_validation" || err.kind === "analysis_validation") {
@@ -147,5 +154,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ data: finalCheck.data }, { status: 200 });
+  // 提出後改善 #3 準備 (2026-06-09): capture_meta は optional の additive フィールド
+  // (undefined なら JSON serialization で落ちる = 従来の { data } 形のまま)。
+  return NextResponse.json(
+    { data: finalCheck.data, capture_meta: captureMeta },
+    { status: 200 },
+  );
 }

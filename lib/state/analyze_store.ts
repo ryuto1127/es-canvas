@@ -47,6 +47,9 @@ import type {
 // 提出後改善 #1 (2026-06-09): 面接質問の再生成 (/api/interview) で
 // analysisResult.interview_questions を置換するため InterviewQuestions 型を参照。
 import type { InterviewQuestions } from "@/lib/schema/interview";
+// 提出後改善 #3 準備 (2026-06-09): 経路別の受動計測メタ(usage / レイテンシ / リトライ回数)。
+// サーバ応答の optional `capture_meta` を dev capture ログに経路別で追記するための型。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 // v2 Phase B3 (2026-05-26): structural カテゴリ採用時の派生 ES 生成
 // (client side 機械適用、AI hallucination 回避)。
 import { applyStructuralOperation } from "@/lib/state/structural_ops";
@@ -676,12 +679,12 @@ export interface ServerError {
 //         リロード耐性のための serialize/parse コストと「dev だけの揮発バッファ」という
 //         単純さのトレードオフで in-memory を採る(dispatch §「in-memory はリロードで消える。
 //         各 ES 後 or 最後に保存する運用前提」と整合)。
-//  4) **kind は 4 種を型として定義するが、現状 UI から発火するのは initial / partial /
-//     refresh の 3 種のみ**。`/api/interview` 独立エンドポイントは存在するが、現状フロント
-//     (components/app)から fetch する経路が無く、面接質問は initial 分析 `/api/analyze` の
-//     結果に `interview_questions` として同梱され `setAnalysisResult` 経由で store に入る。
-//     よって "interview" kind は将来 interview 単独経路が UI に追加されたとき用の予約値で、
-//     本実装では使われない(report / DECISIONS に明記)。
+//  4) **kind は当初 4 種(initial / partial / refresh / interview)を定義し、UI から
+//     発火するのは initial / partial / refresh の 3 種だった**。提出後改善 #1(2026-06-09)
+//     で `/api/interview` が InterviewPanel から呼ばれるようになり、提出後改善 #3 準備
+//     (2026-06-09)で "interview" kind が計測メタ付きで実際に append されるようになった。
+//     同改善で "research" / "semantic_diff" を加算的に拡張(dispatch §3「semantic-diff など
+//     captureLog の既存 kind に無い経路は kind を加算的に拡張してよい」)。
 //
 // 採取内容(dispatch §「採取する内容」):
 //  - timestamp / kind / esLabel(form.es_body 冒頭 20 字)
@@ -690,7 +693,16 @@ export interface ServerError {
 //  - output: 受領した結果オブジェクト全体(= 反映後の analysisResult、指摘・カテゴリ・
 //    元/提案・rationale・rationale_source・internal_priority・逆質問・structural_params・
 //    企業要約・面接質問を欠落なく持つ)+ 反映後の companySummary
-export type CaptureKind = "initial" | "partial" | "refresh" | "interview";
+//  - captureMeta(提出後改善 #3 準備 2026-06-09、optional / additive): サーバ実測の
+//    mode / model / latency_ms / usage(input・output・cached tokens)/ retry_count。
+//    UI(非 dev)には一切出さない(dev ゲート内の CaptureLogButton エクスポートのみ)。
+export type CaptureKind =
+  | "initial"
+  | "partial"
+  | "refresh"
+  | "interview"
+  | "research"
+  | "semantic_diff";
 
 // capture 1 件。output は反映後の analysisResult をそのまま埋め込む(欠落させない)。
 export interface CaptureLogEntry {
@@ -727,6 +739,10 @@ export interface CaptureLogEntry {
     analysisResult: AnalysisResult | null;
     companySummary: CompanySummary | null;
   };
+  // 提出後改善 #3 準備 (2026-06-09): サーバ実測の受動計測メタ(optional / additive)。
+  // capture_meta が応答に付いた経路でのみ埋まる(旧経路 / conflict 採用 / Anthropic
+  // fallback では undefined のまま)。
+  captureMeta?: CaptureMeta;
 }
 
 // module-level の in-memory バッファ。production でも array 自体は存在するが、
@@ -749,7 +765,13 @@ export function clearCaptureLog(): void {
 //  - `state` は append 時点(= set 反映後)に呼び出し側が get() した最新 store。
 //  - 派生 ES は getDerivedEsBody を最新 state から計算する(関数は本ファイル下部で
 //    export 済、hoisting されるため定義順に依存しない)。
-function appendCaptureLog(kind: CaptureKind, state: AnalyzeStore): void {
+//  - 提出後改善 #3 準備 (2026-06-09): optional captureMeta(サーバ実測の受動計測メタ)を
+//    エントリに同梱(additive、無い経路では undefined のまま)。
+function appendCaptureLog(
+  kind: CaptureKind,
+  state: AnalyzeStore,
+  captureMeta?: CaptureMeta,
+): void {
   if (process.env.NODE_ENV !== "development") return;
   const { form, analysisResult } = state;
   const esLabel = form.es_body.slice(0, 20);
@@ -790,7 +812,20 @@ function appendCaptureLog(kind: CaptureKind, state: AnalyzeStore): void {
       analysisResult,
       companySummary: state.companySummary,
     },
+    captureMeta,
   });
+}
+
+// 提出後改善 #3 準備 (2026-06-09): 結果受領 action を経由しない経路(research /
+// semantic_diff)用の append ヘルパ。コンポーネント(InputForm / Canvas)がサーバ応答の
+// capture_meta を受け取った時点で呼ぶ。dev gate は appendCaptureLog 内で効く
+// (production では完全 no-op、永続化なし・in-memory のみの規律は不変)。
+export function appendCaptureMetaEntry(
+  kind: CaptureKind,
+  meta: CaptureMeta,
+): void {
+  if (process.env.NODE_ENV !== "development") return;
+  appendCaptureLog(kind, useAnalyzeStore.getState(), meta);
 }
 
 // -----------------------------------------------------------------------------
@@ -1170,7 +1205,9 @@ export interface AnalyzeStore {
   setResearching: () => void;
   setAnalyzing: () => void;
   setCompanySummary: (summary: CompanySummary) => void;
-  setAnalysisResult: (result: AnalysisResult) => void;
+  // 提出後改善 #3 準備 (2026-06-09): optional captureMeta(受動計測メタ、additive)。
+  // dev capture ログのエントリに同梱されるだけで、UI / 分析ロジックには影響しない。
+  setAnalysisResult: (result: AnalysisResult, captureMeta?: CaptureMeta) => void;
   setResearchError: (err: ServerError) => void;
   setAnalyzeError: (err: ServerError) => void;
   // Phase G Step 1: streaming stage 更新(InputForm の SSE 受信ループから呼ばれる)
@@ -1392,9 +1429,12 @@ export interface AnalyzeStore {
   // 成功適用時に「現在 pendingRefreshScope === consumedScope」なら scope を clear する
   // (in-flight 中に新 scope がマージされていたら参照が変わり clear しない = 再評価が消えない)。
   // 省略時(旧 caller / undefined)は clear しない(後方互換、scope は次の操作で上書きマージ)。
+  // 提出後改善 #3 準備 (2026-06-09): optional captureMeta(受動計測メタ、additive)。
+  // consumedScope の消化規律(改善 #2)には一切影響しない(末尾の dev capture 専用)。
   applyRefreshResult: (
     result: AnalysisResult,
     consumedScope?: PendingRefreshScope | null,
+    captureMeta?: CaptureMeta,
   ) => void;
   // Phase G Step 3b-2 (2026-05-23): partial 結果を既存 analysisResult にマージ。
   // 楽観的並行制御の version 整合は applyRefreshResult と同じ規律。merge ロジックは
@@ -1404,6 +1444,7 @@ export interface AnalyzeStore {
   applyPartialResult: (
     result: PartialAnalysisResult,
     consumedScope?: PendingRefreshScope | null,
+    captureMeta?: CaptureMeta,
   ) => void;
   setRefreshError: (err: ServerError) => void;
   finishRefresh: () => void;
@@ -1418,7 +1459,12 @@ export interface AnalyzeStore {
   //  - setInterviewRefreshError: 失敗を記録し interviewRefreshPhase = "error"。
   //    ServerError の kind をそのまま保持(missing_api_key 導線等の分岐に使う)。
   beginInterviewRefresh: () => void;
-  applyInterviewQuestions: (questions: InterviewQuestions) => void;
+  // 提出後改善 #3 準備 (2026-06-09): optional captureMeta(受動計測メタ、additive)。
+  // メタが付いた応答のときだけ "interview" kind の capture エントリを追記する。
+  applyInterviewQuestions: (
+    questions: InterviewQuestions,
+    captureMeta?: CaptureMeta,
+  ) => void;
   setInterviewRefreshError: (err: ServerError) => void;
   // 2026-05-25 Task #18: partial refresh stream の begin / cleanup。
   //  - beginPartialRefresh: Canvas が partial 経路を選んだ時に呼ぶ。partialRefreshInProgress を
@@ -2130,7 +2176,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   //   - action_history には記録しない(LLM の出力結果のため、循環参照を避ける)
   //   - 派生 ES(getDerivedEsBody)は acceptedSuggestionIds を読むため自動的に
   //     error の proposed が適用された状態で表示される
-  setAnalysisResult: (result) => {
+  setAnalysisResult: (result, captureMeta) => {
     set((s) => {
       const autoIds = result.suggestions
         .filter((sug) => sug.category === "error")
@@ -2163,7 +2209,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
     // 2026-05-28 capture(dev 専用): 初回分析結果を反映後に記録。
     // setAnalysisResult は常に analysisResult を更新するため無条件 append でよい。
     // appendCaptureLog 内部で dev gate(production no-op)。
-    appendCaptureLog("initial", get());
+    // 提出後改善 #3 準備 (2026-06-09): captureMeta(あれば)をエントリに同梱。
+    appendCaptureLog("initial", get(), captureMeta);
   },
 
   // research 失敗は phase を変えない(後続の setAnalyzing が phase を進める)
@@ -3561,7 +3608,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   //     残骸を残さない、refresh は新 suggestions セットで開始するため)
   //   - acceptedSuggestionIds は既存のユーザー操作(明示採用)に新規 auto error を
   //     マージ(union、重複は除外)
-  applyRefreshResult: (result, consumedScope) => {
+  applyRefreshResult: (result, consumedScope, captureMeta) => {
     // 2026-05-28 capture(dev 専用): set 前の analysisResult 参照を保持。set 後に参照が
     // 変わっていれば「結果が反映された」= append。version mismatch(conflictNotification 経路)
     // では analysisResult を更新しないため参照が同一 → append されない(意図通り)。
@@ -3716,9 +3763,10 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
       };
     });
     // 2026-05-28 capture(dev 専用): 結果が実際に反映された(analysisResult 参照が変わった)
-    // ときだけ全体再分析の出力を記録。conflict 分岐では参照不変のため append されない。
+    // ときだけ全体再分析の出力を記録。conflict 分岐では参照不変のため append されない
+    // (= 破棄 / conflict 化した refresh の計測メタは記録されない、既存 capture 規律を維持)。
     if (get().analysisResult !== prevResult) {
-      appendCaptureLog("refresh", get());
+      appendCaptureLog("refresh", get(), captureMeta);
     }
   },
 
@@ -3751,7 +3799,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   // interview_questions:
   //  - partial 結果は interview_questions を返さない(load-bearing field 維持)。既存
   //    analysisResult.interview_questions の is_stale = true に更新する(refresh と同様)。
-  applyPartialResult: (result, consumedScope) => {
+  applyPartialResult: (result, consumedScope, captureMeta) => {
     // 2026-05-28 capture(dev 専用): set 前の analysisResult 参照を保持。set 後に参照が
     // 変わっていれば append。version mismatch / overall_assessment 不在(return {})では
     // analysisResult 不変 → append されない(意図通り)。
@@ -4027,8 +4075,9 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
     });
     // 2026-05-28 capture(dev 専用): partial 結果が反映された(analysisResult 参照が変わった)
     // ときだけ記録。conflict 分岐 / overall_assessment 不在の早期 return では参照不変。
+    // 提出後改善 #3 準備 (2026-06-09): captureMeta(あれば)をエントリに同梱。
     if (get().analysisResult !== prevResult) {
-      appendCaptureLog("partial", get());
+      appendCaptureLog("partial", get(), captureMeta);
     }
   },
 
@@ -4179,7 +4228,10 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   //   付与済のため、そのまま採用すれば「最新 ES 基準・非 stale」状態になる。
   //   analysisResult が null(理論上不到達 — 面接質問は分析後にしか出ない)の場合は phase の
   //   復帰のみ行い、questions は捨てる(置換先が無いため)。
-  applyInterviewQuestions: (questions) =>
+  //   提出後改善 #3 準備 (2026-06-09): captureMeta が付いた応答のときだけ "interview" kind
+  //   の capture エントリを追記(dev 専用)。メタ無し応答(Anthropic fallback 等)では
+  //   従来どおり何も記録しない(interview kind の従来挙動 = 未使用 を additive に拡張)。
+  applyInterviewQuestions: (questions, captureMeta) => {
     set((s) => {
       if (s.analysisResult === null) {
         return { interviewRefreshPhase: "idle", interviewRefreshError: null };
@@ -4192,7 +4244,11 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         interviewRefreshPhase: "idle",
         interviewRefreshError: null,
       };
-    }),
+    });
+    if (captureMeta !== undefined) {
+      appendCaptureLog("interview", get(), captureMeta);
+    }
+  },
 
   // setInterviewRefreshError: 再生成失敗を記録。kind を握りつぶさず保持する
   //   (InterviewPanel が missing_api_key を見て「設定を開く」導線を出すため)。

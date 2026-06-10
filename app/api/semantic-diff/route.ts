@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { judgeSemanticDiff } from "@/lib/llm/semantic_diff";
 import { OPENAI_KEY_HEADER } from "@/lib/llm/openai_key";
 import { z } from "zod";
+// 提出後改善 #3 準備 (2026-06-09): 受動計測メタ(JSON 応答の optional フィールドで伝搬)。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 
 // 統合改修パッケージ (2026-05-25): 動的 HITL の意味的差分判定エンドポイント
 //
@@ -59,9 +61,18 @@ export async function POST(req: NextRequest) {
 
   // judgeSemanticDiff は fail-safe(API error 時に semantically_same: false を返す)、
   // 例外を投げない設計。ここでは戻り値をそのまま JSON で返す。
+  // 提出後改善 #3 準備 (2026-06-09): onMeta callback で受動計測メタを受け取り、
+  // optional の additive フィールドとして同梱(早期判定 / API error 経路では undefined =
+  // JSON serialization で落ちて従来の { data } 形のまま)。
   try {
-    const result = await judgeSemanticDiff(before, after, rawHeaderKey);
-    return NextResponse.json({ data: result }, { status: 200 });
+    let captureMeta: CaptureMeta | undefined;
+    const result = await judgeSemanticDiff(before, after, rawHeaderKey, (meta) => {
+      captureMeta = meta;
+    });
+    return NextResponse.json(
+      { data: result, capture_meta: captureMeta },
+      { status: 200 },
+    );
   } catch (err) {
     // judgeSemanticDiff は本来 throw しないが、防御的に処理する。
     console.error("[/api/semantic-diff] unexpected error", err);

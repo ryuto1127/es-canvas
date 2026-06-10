@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+// 提出後改善 #3 準備 (2026-06-09): completed event の optional 計測メタ型(additive)。
+import type { CaptureMeta } from "./capture_meta";
 import {
   type CompanySummary,
   type ResearchInputSource,
@@ -785,11 +787,17 @@ export type AnalyzeStreamEvent =
       type: "completed";
       kind: "full";
       result: AnalysisResult;
+      // 提出後改善 #3 準備 (2026-06-09): 受動計測メタ(optional、additive)。
+      // OpenAI provider のみ設定する(Anthropic は凍結方針どおり未実装 = undefined)。
+      // 既存 client の parse は未知 / 欠落フィールドで壊れない(optional のため)。
+      capture_meta?: CaptureMeta;
     }
   | {
       type: "completed";
       kind: "partial";
       result: PartialAnalysisResult;
+      // 提出後改善 #3 準備 (2026-06-09): 同上(optional、additive)。
+      capture_meta?: CaptureMeta;
     }
   | {
       type: "error";

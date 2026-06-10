@@ -35,6 +35,8 @@ import type {
   PartialAnalysisResult,
 } from "@/lib/schema/analysis";
 import type { AnalyzeInputBundle } from "@/lib/schema/input";
+// 提出後改善 #3 準備 (2026-06-09): completed event の optional 受動計測メタ。
+import type { CaptureMeta } from "@/lib/llm/capture_meta";
 import type { ServerError, StreamingStage } from "@/lib/state/analyze_store";
 import { openAIKeyHeader } from "@/lib/byok";
 
@@ -42,6 +44,8 @@ import { openAIKeyHeader } from "@/lib/byok";
 // started.mode は "initial" | "refresh" | "partial" の union
 // (Phase G Step 2 で refresh、Step 3b-2 で partial を追加)
 // completed event は kind で full / partial を判別(Step 3b-2)
+// 提出後改善 #3 準備 (2026-06-09): completed に optional capture_meta(additive、
+// サーバが付けない場合 / 旧サーバでも parse は壊れない)。
 export type AnalyzeStreamPayload =
   | {
       type: "started";
@@ -52,8 +56,18 @@ export type AnalyzeStreamPayload =
   | { type: "thinking"; delta: string }
   | { type: "tool_progress"; cumulativeChars: number }
   | { type: "retry"; issueKinds: string[] }
-  | { type: "completed"; kind: "full"; result: AnalysisResult }
-  | { type: "completed"; kind: "partial"; result: PartialAnalysisResult }
+  | {
+      type: "completed";
+      kind: "full";
+      result: AnalysisResult;
+      capture_meta?: CaptureMeta;
+    }
+  | {
+      type: "completed";
+      kind: "partial";
+      result: PartialAnalysisResult;
+      capture_meta?: CaptureMeta;
+    }
   | {
       type: "error";
       kind: string;
@@ -76,9 +90,21 @@ export interface CallAnalyzeStreamOptions {
 
 // Phase G Step 3b-2: full / partial 両モードを表現する union 戻り値。
 // 呼び出し側(Canvas)は kind を見て applyRefreshResult / applyPartialResult を分岐する。
+// 提出後改善 #3 準備 (2026-06-09): captureMeta(optional)を pass-through。caller が
+// dev capture ログに経路別で追記する(undefined なら何も記録しない)。
 export type CallAnalyzeStreamResult =
-  | { ok: true; kind: "full"; result: AnalysisResult }
-  | { ok: true; kind: "partial"; result: PartialAnalysisResult }
+  | {
+      ok: true;
+      kind: "full";
+      result: AnalysisResult;
+      captureMeta?: CaptureMeta;
+    }
+  | {
+      ok: true;
+      kind: "partial";
+      result: PartialAnalysisResult;
+      captureMeta?: CaptureMeta;
+    }
   | { ok: false; error: ServerError };
 
 // =============================================================================
@@ -206,9 +232,14 @@ export async function callAnalyzeStream(
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   // Step 3b-2: full / partial を kind で判別して保持。lastResult は最後の completed event。
+  // 提出後改善 #3 準備 (2026-06-09): captureMeta も completed event から保持(optional)。
   let lastResult:
-    | { kind: "full"; result: AnalysisResult }
-    | { kind: "partial"; result: PartialAnalysisResult }
+    | { kind: "full"; result: AnalysisResult; captureMeta?: CaptureMeta }
+    | {
+        kind: "partial";
+        result: PartialAnalysisResult;
+        captureMeta?: CaptureMeta;
+      }
     | null = null;
   let lastError: ServerError | null = null;
 
@@ -261,10 +292,19 @@ export async function callAnalyzeStream(
           case "completed":
             onStage?.("finalizing");
             // Step 3b-2: kind で分岐(full / partial で別 result 型)
+            // 提出後改善 #3 準備 (2026-06-09): capture_meta を pass-through(optional)。
             if (payload.kind === "partial") {
-              lastResult = { kind: "partial", result: payload.result };
+              lastResult = {
+                kind: "partial",
+                result: payload.result,
+                captureMeta: payload.capture_meta,
+              };
             } else {
-              lastResult = { kind: "full", result: payload.result };
+              lastResult = {
+                kind: "full",
+                result: payload.result,
+                captureMeta: payload.capture_meta,
+              };
             }
             break;
           case "error":
@@ -322,9 +362,19 @@ export async function callAnalyzeStream(
   if (lastResult) {
     // Step 3b-2: kind を維持して返す(呼び出し側で full / partial を narrowing できる)
     if (lastResult.kind === "partial") {
-      return { ok: true, kind: "partial", result: lastResult.result };
+      return {
+        ok: true,
+        kind: "partial",
+        result: lastResult.result,
+        captureMeta: lastResult.captureMeta,
+      };
     }
-    return { ok: true, kind: "full", result: lastResult.result };
+    return {
+      ok: true,
+      kind: "full",
+      result: lastResult.result,
+      captureMeta: lastResult.captureMeta,
+    };
   }
   return {
     ok: false,
