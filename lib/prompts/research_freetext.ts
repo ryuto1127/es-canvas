@@ -1,8 +1,8 @@
 // Phase E 拡張(2026-05-23): 自由テキスト → CompanySummary 整形プロンプト。
 //
-// ユーザーが自分でリサーチした企業情報メモ(例: 「ターゲット企業(B2B SaaS、行動指針
-// 『Data First』『徳』『Trustful Team』『Fact Base』『Be Animal』。2025年4月に
-// 『Bet Technology』を『Data First』に更新、AIを意思決定の基礎に据える文化を重視)」)
+// ユーザーが自分でリサーチした企業情報メモ(架空の説明例: 「ターゲット企業(B2B SaaS、行動指針
+// 『Think Deep』『誠実』『Open Hands』『Try First』『User Compass』。指針名を一度整理して
+// 『Think Deep』に統合した想定で、AIを意思決定の基礎に据える文化を重視)」)
 // を LLM が読み、CompanySummarySchema に整形する単発呼び出し用プロンプト。
 // エージェントループは経由しない(web_search / fetch_page は使わない)。
 //
@@ -26,7 +26,7 @@ export const RESEARCH_FREETEXT_SYSTEM_PROMPT = `あなたはユーザーが自�
 
 - **company_name**: 自由テキストから企業名を抽出。明示が無く推測も困難なら "(企業名不明)" を入れる
 - **business_summary**: 自由テキストから事業概要を 1〜2文(20〜500字)で整理。書かれていない情報を捏造しない
-- **values**: 自由テキストから読み取れる行動指針/価値観の名前を最大5個(例: ["Bet AI", "徳", "Trustful Team"])
+- **values**: 自由テキストから読み取れる行動指針/価値観の名前を最大5個(例: ["Think Deep", "誠実", "Open Hands"])
 - **ideal_candidate**: 自由テキストに「求める人物像」「採用方針」が明示されていれば 1〜3文に整理、無ければ null
 - **hiring_criteria**: 自由テキストに評価軸が明示されていれば最大5個、無ければ空配列
 - **evidence**: 自由テキスト内の verbatim 引用を裏付けとした証拠の配列(必ず 1 件以上、最大20件)
@@ -42,7 +42,7 @@ export const RESEARCH_FREETEXT_SYSTEM_PROMPT = `あなたはユーザーが自�
 
 # 解釈の範囲(やってよいこと・いけないこと)
 
-- ✅ 自由テキストに「Bet AI」とあれば values に "Bet AI" を入れてよい(自然な抽出)
+- ✅ 自由テキストに「Think Deep」とあれば values に "Think Deep" を入れてよい(自然な抽出)
 - ✅ 自由テキストの「AIを意思決定の基礎に据える」を business_summary や claim に再構成してよい
 - ✅ 自由テキストの category(価値観/採用/技術文化/経営陣/直近の動き/業界)を読み取って evidence.category に割り当てる
 - ❌ 自由テキストにない情報を「企業はこう考えているはず」と推測で埋めない

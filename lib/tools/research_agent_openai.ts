@@ -116,7 +116,7 @@ export const SUBMIT_SUMMARY_TOOL_OAI: OpenAI.Responses.FunctionTool = {
       values: {
         type: "array",
         description:
-          "category=official_value の evidence から抽出した、企業の価値観/行動指針の名前(最大5個、原文表現を尊重)。証拠が無ければ空配列。例: ['Bet Technology', '徳', 'Trustful Team']",
+          "category=official_value の evidence から抽出した、企業の価値観/行動指針の名前(最大5個、原文表現を尊重)。証拠が無ければ空配列。例: ['Think Deep', '誠実', 'Open Hands']",
         items: { type: "string" },
         maxItems: 5,
       },

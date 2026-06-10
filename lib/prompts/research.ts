@@ -65,7 +65,7 @@ ES(エントリーシート)は「貴社の[直近の動き]を見て、私の[�
 
 # 合成ビュー(\`submit_summary\` に渡す簡易リスト)
 
-- **values**: category=official_value の evidence から、明確な行動指針/価値観の名前を最大5個抽出(例: ["Bet Technology", "徳", "Trustful Team"])。証拠が無ければ空配列
+- **values**: category=official_value の evidence から、明確な行動指針/価値観の名前を最大5個抽出(例: ["Think Deep", "誠実", "Open Hands"])。証拠が無ければ空配列
 - **ideal_candidate**: category=hiring_signal の evidence から、求める人物像を1〜3文に要約。証拠が無ければ null
 - **hiring_criteria**: category=hiring_signal の evidence から、明示された評価軸を最大5個抽出
 

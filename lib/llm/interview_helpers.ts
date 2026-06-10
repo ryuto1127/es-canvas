@@ -15,7 +15,7 @@ import type { InterviewInputBundle } from "../schema/input";
 //
 // 「企業価値観に言及しているか」の自動検出は当面入れない。
 //   - 価値観キーワードの正規表現マッチは false positive / negative が多い
-//   - 「Bet AI」を完全一致で求めると言い換え(「データ駆動の判断」等)を不当に弾く
+//   - 「Think Deep」を完全一致で求めると言い換え(「データ駆動の判断」等)を不当に弾く
 //   - Phase D セッション6 スコープ: 目視確認(tests/interview.test.ts)で十分
 
 export type InterviewValidationIssue =

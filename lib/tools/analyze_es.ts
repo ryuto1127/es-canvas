@@ -216,7 +216,7 @@ const SUGGESTION_ITEM_SCHEMA_WITH_INTERNAL_PRIORITY = {
         reference: {
           type: "string",
           description:
-            "参照元の短い説明(例: 「STAR構造のSituation補強」「Bet AI」)",
+            "参照元の短い説明(例: 「STAR構造のSituation補強」「Think Deep」)",
         },
         url: {
           type: "string",

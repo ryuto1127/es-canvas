@@ -56,12 +56,12 @@ export const ANALYZE_FEWSHOT_USER_MESSAGE = `[ES本体]
 学生時代に最も力を入れたことを教えてください(400字以内)
 
 [企業要約]
-価値観: Data First, 徳, Trustful Team, Fact Base, Be Animal
+価値観: Think Deep, 誠実, Open Hands, Try First, User Compass
 事業概要: B2B SaaS企業。AIを意思決定の基礎に据え、ファクトベースで判断する文化を重視。
 ソースURL: https://example-saas.com/
 
 # 承認済み evidence(rationale_source.evidence_id はこのリストからのみ選択可)
-- ev_001: "Data First" (https://example-saas.com/about)
+- ev_001: "Think Deep" (https://example-saas.com/about)
 
 [添削条件]
 プリセット: バランス
@@ -193,10 +193,10 @@ export const ANALYZE_FEWSHOT_ASSISTANT_INPUT = {
         "ファクトに基づいて仲間の状況を捉え、共に意思決定する習慣の重要性を学びました",
       alternatives: [],
       rationale:
-        "ターゲット企業の「Data First」が示すデータ駆動の判断文化と接続できる学びの言語化に置き換えると、企業価値観への適合度が上がります。同じ箇所への独自視点案(関連指摘)も併存しているため、ユーザーは独自視点と企業価値観接続のどちらを優先するかを比較した上で、片方を採用してください。",
+        "ターゲット企業の「Think Deep」が示すデータ駆動の判断文化と接続できる学びの言語化に置き換えると、企業価値観への適合度が上がります。同じ箇所への独自視点案(関連指摘)も併存しているため、ユーザーは独自視点と企業価値観接続のどちらを優先するかを比較した上で、片方を採用してください。",
       rationale_source: {
         type: "company_value",
-        reference: "Data First",
+        reference: "Think Deep",
         url: "https://example-saas.com/about",
         evidence_id: "ev_001",
       },
@@ -271,7 +271,7 @@ export const ANALYZE_FEWSHOT_ASSISTANT_INPUT = {
       {
         id: "iq_003",
         question:
-          "貴社の「Data First」という指針に、ご自身のサークル経験はどう繋がりますか?",
+          "貴社の「Think Deep」という指針に、ご自身のサークル経験はどう繋がりますか?",
         rationale:
           "ESには企業価値観との接続が書かれていない。志望動機系の質問で必ず聞かれる。",
         answer_hint:
@@ -290,7 +290,7 @@ export const ANALYZE_FEWSHOT_ASSISTANT_INPUT = {
       question:
         "企業のどの事業に最も貢献したいと考えていますか?サークル経験のどの場面と接続できそうですか?",
       rationale:
-        "ES の結末「リーダーシップとチームワークの大切さを学んだ」が抽象的で、企業価値観との接続が読み取れません。事業を具体に絞った回答が得られれば、sug_006(Data First 接続)の rationale をより説得力ある形に refine できます",
+        "ES の結末「リーダーシップとチームワークの大切さを学んだ」が抽象的で、企業価値観との接続が読み取れません。事業を具体に絞った回答が得られれば、sug_006(Think Deep 接続)の rationale をより説得力ある形に refine できます",
     },
   ],
 } as const;

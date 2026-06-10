@@ -102,7 +102,7 @@ export const SUBMIT_FREETEXT_SUMMARY_TOOL: Anthropic.Messages.Tool = {
       values: {
         type: "array",
         description:
-          "自由テキストから読み取れる行動指針/価値観の名前(最大5個、原文表現を尊重)。例: ['Bet AI', '徳', 'Trustful Team']。読み取れなければ空配列。",
+          "自由テキストから読み取れる行動指針/価値観の名前(最大5個、原文表現を尊重)。例: ['Think Deep', '誠実', 'Open Hands']。読み取れなければ空配列。",
         items: { type: "string" },
         maxItems: 5,
       },

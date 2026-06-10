@@ -89,7 +89,7 @@ function renderUserContextBlock(userContext: string): string {
 }
 
 // 面接モードでは rationale_source の検証は無いが、企業要約の evidence を LLM の文脈に
-// 残すことで「Bet AI への接続」のような具体的な質問が立てやすくなる。
+// 残すことで「Think Deep への接続」のような具体的な質問が立てやすくなる。
 // initial と同じ render を流用しつつ、ヘッダの文言だけ面接質問向けにする。
 function renderEvidenceBlock(summary: CompanySummary | undefined): string {
   if (!summary || summary.evidence.length === 0) {
