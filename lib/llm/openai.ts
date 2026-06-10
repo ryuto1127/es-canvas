@@ -700,8 +700,13 @@ export class OpenAIProvider implements LLMProvider {
   // 統合改修パッケージ (2026-05-25): SSE streaming 経路 — initial。
   // 既存の同期版 `analyze(input, "initial")` は維持(tests/analyze-bench.test.ts 等の
   // 外部 caller / fallback を温存するため)。route は streaming を必ず使う。
+  //
+  // 提出後改善 #2 (2026-06-09): optional signal を受け取る形に拡張(forward-compat)。
+  // initial はキャンセル UI が無いため現状 route から signal は渡らないが、将来の
+  // キャンセルボタン導入時に refresh/partial と同じ配線を再利用できるようにする。
   analyzeInitialStream(
     input: AnalyzeInput,
+    signal?: AbortSignal,
   ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
     if (input.mode !== "initial") {
       throw new LLMError(
@@ -709,13 +714,17 @@ export class OpenAIProvider implements LLMProvider {
         "analyzeInitialStream は initial モードのみ受け付ける",
       );
     }
-    return analyzeInitialStreamingOpenAI(this.client, input);
+    return analyzeInitialStreamingOpenAI(this.client, input, signal);
   }
 
   // 統合改修パッケージ (2026-05-25): SSE streaming 経路 — refresh。
   // Anthropic 経路と同じ event 種別 / 同じ防衛三段で振る舞う。
+  //
+  // 提出後改善 #2 (2026-06-09): optional signal を末端の `responses.stream` まで伝搬し、
+  // client が破棄した refresh の OpenAI 生成を停止する(課金停止)。
   analyzeRefreshStream(
     input: AnalyzeInput,
+    signal?: AbortSignal,
   ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
     if (input.mode !== "refresh") {
       throw new LLMError(
@@ -723,12 +732,16 @@ export class OpenAIProvider implements LLMProvider {
         "analyzeRefreshStream は refresh モードのみ受け付ける",
       );
     }
-    return analyzeRefreshStreamingOpenAI(this.client, input);
+    return analyzeRefreshStreamingOpenAI(this.client, input, signal);
   }
 
   // 統合改修パッケージ (2026-05-25): SSE streaming 経路 — partial。
+  //
+  // 提出後改善 #2 (2026-06-09): optional signal を末端の `responses.stream` まで伝搬し、
+  // client が破棄した partial の OpenAI 生成を停止する(課金停止)。
   analyzePartialStream(
     input: AnalyzeInput,
+    signal?: AbortSignal,
   ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
     if (input.mode !== "partial") {
       throw new LLMError(
@@ -736,7 +749,7 @@ export class OpenAIProvider implements LLMProvider {
         "analyzePartialStream は partial モードのみ受け付ける",
       );
     }
-    return analyzePartialStreamingOpenAI(this.client, input);
+    return analyzePartialStreamingOpenAI(this.client, input, signal);
   }
 
   // 統合改修パッケージ (2026-05-25): /api/interview 経路の本実装。
@@ -1103,18 +1116,55 @@ async function analyzeRefreshOpenAI(
 // completed / error のみを yield する。
 //
 // 設計判断:
-//  - 非 streaming で 1 リクエストを完結させ、得られた response から output[] を
-//    走査して event を「擬似的に」流す。OpenAI Responses API の純 streaming
-//    (`stream: true`)は本 dispatch では採用しない(SSE pipeline の単純さを優先、
-//    将来 streaming token 進捗を流す改修は v2 で再評価)。
+//  - OpenAI Responses API を **streaming(`responses.stream`)** で 1 リクエスト呼び、
+//    stream を消費して final response を組み立てる。得られた response から output[] を
+//    走査して event を「擬似的に」流す外形は従来通り(started / tool_progress 1 回 /
+//    completed 1 回)。外部 SSE 契約(イベント型・HTTP 200 固定・completed 1 回)は不変。
 //  - tool_progress event は「arguments の累積文字数」を 1 回だけ流す(SSE client が
 //    "generating" stage を確認できる程度の最小限のシグナル、UX 上は十分)。
 //  - 防衛三段 Part 3 は同期版と同じ実装(validateAnalysisAgainstInput + 1 回リトライ)。
+//
+// 提出後改善 #2 (2026-06-09) — abort 伝搬による課金停止:
+//  - 旧実装は非 streaming 単発 `responses.create` で、接続を切っても OpenAI 側の生成が
+//    完走し、破棄される refresh/partial が BYOK ユーザーの鍵に満額課金されていた。
+//  - 方式選定: `responses.stream(body, { signal })` に切替。streaming 接続を abort で
+//    切ると OpenAI server が client 切断を検知して生成を停止する(= 課金停止)。
+//    background モード + cancel(候補 ii)は polling が必要で複雑かつ request 形が
+//    大きく変わるため不採用。stream 切替は request body も final response 形(.output /
+//    .usage / .status)も同一で、既存の assemble / 防衛三段ロジックを一切変えずに済む。
+//  - `runResponseStream` helper が stream を await finalResponse() して Response を返す。
+//    abort 時は finalResponse() が AbortError を reject → 各 generator の try/catch が
+//    catch して関数を return(error frame を流さない。route 側で abort 検知 → 静かに閉じる)。
+//  - signal === undefined(route が渡さない initial 経路 / 将来の caller)でも streaming
+//    で動作する(signal 無し = abort 不可なだけ、外形は同じ)。
 // =============================================================================
+
+// 提出後改善 #2 (2026-06-09): streaming で 1 リクエストを呼び、final response を返す helper。
+// abort 伝搬の単一経路(全 generator がここを通る)。`responses.stream` は内部で
+// `responses.create({ ...body, stream: true }, { signal })` を呼び、与えた signal を
+// 末端 fetch まで forward する(client が abort すると OpenAI streaming 接続が切れ、
+// server が生成を停止 = 課金停止)。finalResponse() は stream 完走後の累積 Response を
+// 返し、その形は非 streaming `responses.create` と同一(.output / .usage / .status)。
+async function runResponseStream(
+  client: OpenAI,
+  // `responses.stream` は `stream` フィールドを持たない params を要求する
+  // (内部で `stream: true` を付与する)。本 helper の呼び出し側は元々 `stream` を
+  // 設定しないため Omit で型整合させる(非 streaming `responses.create` と同一 body)。
+  body: Omit<OpenAI.Responses.ResponseCreateParamsNonStreaming, "stream">,
+  signal?: AbortSignal,
+): Promise<OpenAI.Responses.Response> {
+  const stream = client.responses.stream(body, signal ? { signal } : undefined);
+  // finalResponse() は stream が response.completed まで到達した後の最終 Response を解決。
+  // abort された場合は reject(AbortError 系)→ 呼び出し側の try/catch が握る。
+  return stream.finalResponse();
+}
 
 async function* analyzeInitialStreamingOpenAI(
   client: OpenAI,
   input: AnalyzeInput,
+  // 提出後改善 #2 (2026-06-09): optional abort signal。initial は現状 route から
+  // 渡らない(キャンセル UI 無し)が、将来の caller 用に末端まで伝搬可能にしておく。
+  signal?: AbortSignal,
 ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
   if (input.mode !== "initial") {
     yield {
@@ -1159,21 +1209,29 @@ async function* analyzeInitialStreamingOpenAI(
 
     let response: OpenAI.Responses.Response;
     try {
-      response = await client.responses.create({
-        model: MODEL_ANALYZE,
-        input: nextInput,
-        instructions: ANALYZE_SYSTEM_PROMPT,
-        tools,
-        tool_choice: {
-          type: "function",
-          name: ANALYZE_ES_TOOL_NAME_OAI,
+      // 提出後改善 #2 (2026-06-09): streaming で呼び signal を末端まで伝搬(課金停止)。
+      // body / final response 形は非 streaming `responses.create` と同一。
+      response = await runResponseStream(
+        client,
+        {
+          model: MODEL_ANALYZE,
+          input: nextInput,
+          instructions: ANALYZE_SYSTEM_PROMPT,
+          tools,
+          tool_choice: {
+            type: "function",
+            name: ANALYZE_ES_TOOL_NAME_OAI,
+          },
+          max_output_tokens: ANALYZE_MAX_OUTPUT_TOKENS,
+          reasoning: {
+            effort: attempt === 0 ? "medium" : "low",
+          },
         },
-        max_output_tokens: ANALYZE_MAX_OUTPUT_TOKENS,
-        reasoning: {
-          effort: attempt === 0 ? "medium" : "low",
-        },
-      });
+        signal,
+      );
     } catch (err) {
+      // abort された場合は静かに return(client は既に離脱、error frame 不要)。
+      if (signal?.aborted) return;
       yield* yieldOpenAIError(err, "analyze_initial_stream");
       return;
     }
@@ -1324,6 +1382,8 @@ async function* analyzeInitialStreamingOpenAI(
 async function* analyzeRefreshStreamingOpenAI(
   client: OpenAI,
   input: AnalyzeInput,
+  // 提出後改善 #2 (2026-06-09): client が破棄した refresh の OpenAI 生成を停止する signal。
+  signal?: AbortSignal,
 ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
   if (input.mode !== "refresh") {
     yield {
@@ -1368,21 +1428,28 @@ async function* analyzeRefreshStreamingOpenAI(
 
     let response: OpenAI.Responses.Response;
     try {
-      response = await client.responses.create({
-        model: MODEL_REFRESH,
-        input: nextInput,
-        instructions: ANALYZE_SYSTEM_PROMPT,
-        tools,
-        tool_choice: {
-          type: "function",
-          name: ANALYZE_ES_REFRESH_ONLY_TOOL_NAME_OAI,
+      // 提出後改善 #2 (2026-06-09): streaming で呼び signal を末端まで伝搬(課金停止)。
+      response = await runResponseStream(
+        client,
+        {
+          model: MODEL_REFRESH,
+          input: nextInput,
+          instructions: ANALYZE_SYSTEM_PROMPT,
+          tools,
+          tool_choice: {
+            type: "function",
+            name: ANALYZE_ES_REFRESH_ONLY_TOOL_NAME_OAI,
+          },
+          max_output_tokens: REFRESH_MAX_OUTPUT_TOKENS,
+          reasoning: {
+            effort: attempt === 0 ? "medium" : "low",
+          },
         },
-        max_output_tokens: REFRESH_MAX_OUTPUT_TOKENS,
-        reasoning: {
-          effort: attempt === 0 ? "medium" : "low",
-        },
-      });
+        signal,
+      );
     } catch (err) {
+      // abort された場合は静かに return(client は既に離脱、error frame 不要)。
+      if (signal?.aborted) return;
       yield* yieldOpenAIError(err, "analyze_refresh_stream");
       return;
     }
@@ -1533,6 +1600,8 @@ async function* analyzeRefreshStreamingOpenAI(
 async function* analyzePartialStreamingOpenAI(
   client: OpenAI,
   input: AnalyzeInput,
+  // 提出後改善 #2 (2026-06-09): client が破棄した partial の OpenAI 生成を停止する signal。
+  signal?: AbortSignal,
 ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
   if (input.mode !== "partial") {
     yield {
@@ -1583,21 +1652,28 @@ async function* analyzePartialStreamingOpenAI(
 
     let response: OpenAI.Responses.Response;
     try {
-      response = await client.responses.create({
-        model: MODEL_REFRESH,
-        input: nextInput,
-        instructions: ANALYZE_SYSTEM_PROMPT,
-        tools,
-        tool_choice: {
-          type: "function",
-          name: ANALYZE_ES_PARTIAL_REFRESH_TOOL_NAME_OAI,
+      // 提出後改善 #2 (2026-06-09): streaming で呼び signal を末端まで伝搬(課金停止)。
+      response = await runResponseStream(
+        client,
+        {
+          model: MODEL_REFRESH,
+          input: nextInput,
+          instructions: ANALYZE_SYSTEM_PROMPT,
+          tools,
+          tool_choice: {
+            type: "function",
+            name: ANALYZE_ES_PARTIAL_REFRESH_TOOL_NAME_OAI,
+          },
+          max_output_tokens: PARTIAL_MAX_OUTPUT_TOKENS,
+          reasoning: {
+            effort: attempt === 0 ? "medium" : "low",
+          },
         },
-        max_output_tokens: PARTIAL_MAX_OUTPUT_TOKENS,
-        reasoning: {
-          effort: attempt === 0 ? "medium" : "low",
-        },
-      });
+        signal,
+      );
     } catch (err) {
+      // abort された場合は静かに return(client は既に離脱、error frame 不要)。
+      if (signal?.aborted) return;
       yield* yieldOpenAIError(err, "analyze_partial_stream");
       return;
     }

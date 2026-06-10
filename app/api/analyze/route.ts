@@ -131,12 +131,46 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // abort 伝搬(提出後改善 #2 2026-06-09)— 破棄 refresh の課金停止
+  // -------------------------------------------------------------------------
+  // 背景: 楽観的並行制御により、後続操作が in-flight の refresh/partial fetch を
+  //   client 側で abort する。しかし従来は (a) この route の `ReadableStream.cancel()`
+  //   が空実装、(b) provider の OpenAI 呼び出しに AbortSignal が渡らず、さらに
+  //   (c) 非ストリーミング単発 `responses.create` のため接続を切っても OpenAI 側の
+  //   生成が完走し、破棄される応答が BYOK ユーザーの鍵に満額課金されていた。
+  //
+  // 方式選定(調査結果): OpenAI Responses API を **streaming(`responses.stream`)**
+  //   で呼ぶことで、abort 時に streaming 接続を切ると server が client 切断を検知して
+  //   生成を停止する(= 課金が止まる)。provider 側は stream を消費して final response
+  //   を組み立てるため、**外部 SSE 契約(イベント型・HTTP 200 固定・completed 1 回)は
+  //   一切変えない**(擬似 streaming の外形は維持)。詳細は lib/llm/openai.ts を参照。
+  //
+  // 配線: client が `/api/analyze` への fetch を abort すると、Next.js は `req.signal`
+  //   を abort し、本 ReadableStream の `cancel()` も呼ぶ。いずれかが発火したら
+  //   `upstreamAbort` を abort し、その signal を generator → provider →
+  //   `responses.stream(body, { signal })` の末端まで伝搬する。
+  //
+  // 注: initial 経路はキャンセル UI が存在しないためスコープ外(signal を渡さない)。
+  //   将来キャンセルボタンを導入する際は refresh/partial と同じ配線を再利用できる
+  //   (analyzeInitialStream も optional signal を受け取る形に拡張済)。
+  const upstreamAbort = new AbortController();
+  if (req.signal) {
+    if (req.signal.aborted) {
+      upstreamAbort.abort();
+    } else {
+      req.signal.addEventListener("abort", () => upstreamAbort.abort(), {
+        once: true,
+      });
+    }
+  }
+
   const generator =
     input.mode === "initial"
       ? provider.analyzeInitialStream(input)
       : input.mode === "refresh"
-        ? provider.analyzeRefreshStream(input)
-        : provider.analyzePartialStream(input);
+        ? provider.analyzeRefreshStream(input, upstreamAbort.signal)
+        : provider.analyzePartialStream(input, upstreamAbort.signal);
 
   // stage label は mode に応じて変える(error event の stage / log で使い分け)
   const stageLabel = stageLabelFor(input.mode);
@@ -218,6 +252,16 @@ export async function POST(req: NextRequest) {
           if (event.type === "error") break;
         }
       } catch (err) {
+        // abort 経路(提出後改善 #2 2026-06-09): client が離脱して upstreamAbort が
+        // 発火している場合、provider 側の `responses.stream` が AbortError を投げる。
+        // client は既に SSE を読んでいないため error frame を流す必要はない。
+        // サーバログに 1 行だけ残して静かに閉じる(課金は streaming 切断で停止済)。
+        if (upstreamAbort.signal.aborted) {
+          console.info(
+            `[/api/analyze ${input.mode} stream] aborted by client — generation stopped`,
+          );
+          return;
+        }
         // generator 内部の例外(LLMError 等)。SSE で error event を流して
         // 200 のまま閉じる。client は payload の type を見て分岐。
         console.error(`[/api/analyze ${input.mode} stream] generator error`, err);
@@ -252,16 +296,30 @@ export async function POST(req: NextRequest) {
           );
         }
       } finally {
-        controller.close();
+        // 提出後改善 #2 (2026-06-09): abort/cancel 後は stream が既に closed/errored 状態の
+        // ことがあり、その状態で close() を呼ぶと TypeError("Controller is already closed")
+        // になりうる。abort 経路で finally が早く回るようになったため防御的に try/catch する。
+        try {
+          controller.close();
+        } catch {
+          // 既に閉じている(cancel 済)場合は無視
+        }
       }
     },
     cancel() {
       // client がブラウザを閉じた / AbortController.abort() で stream を中断したケース。
       // Phase G Step 2 (2026-05-23): client 側の楽観的並行制御で前の refresh を中断する
-      // ケースに該当する。Anthropic SDK の MessageStream は GC で解放される想定(SDK の
-      // 内部 abort は connection を閉じるだけで応答コストは止まらないが、本実装では
-      // それで充分 — client が結果を破棄するため)。厳密な server-side abort 伝搬は
-      // 今後の最適化課題として残す。
+      // ケースに該当する。
+      //
+      // 提出後改善 #2 (2026-06-09): ここで upstreamAbort を発火させ、provider 側の
+      // `responses.stream` 接続を切る。OpenAI streaming は client 切断を検知して生成を
+      // 停止するため、破棄される refresh/partial の生成コスト(BYOK ユーザーの鍵への
+      // 課金)が止まる。`req.signal` 経路と二重に発火しうるが abort は冪等。
+      //
+      // Anthropic provider は本 dispatch では凍結対象(signal を受け取る optional 引数は
+      // 追加するが内部実装は同期しない)。Anthropic 経路では従来通り connection を閉じる
+      // だけで、応答コストは止まらない(v2 切戻し / 障害時 fallback 用のため許容)。
+      upstreamAbort.abort();
     },
   });
 

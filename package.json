@@ -21,7 +21,9 @@
     "test:initial": "tsx tests/initial_user_message.test.ts",
     "test:byok": "tsx tests/byok.test.ts",
     "test:form": "tsx tests/form_validation.test.ts",
-    "test:interview-bundle": "tsx tests/interview_bundle.test.ts"
+    "test:interview-bundle": "tsx tests/interview_bundle.test.ts",
+    "test:scope-merge": "tsx tests/refresh_scope_merge.test.ts",
+    "test:abort": "tsx tests/abort_propagation.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",

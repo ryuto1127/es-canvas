@@ -623,8 +623,16 @@ export class AnthropicProvider implements LLMProvider {
   //   - 揃ったら既存 validateAnalysisAgainstInput + 1 回リトライ機構を発火
   //   - streaming の体感メリットは thinking summary と tool_progress(token 進捗)で表現
   //   - 真の「suggestion を 1 件ずつ表示」は Step 2 以降で partial JSON parser 導入を再評価
+  // 提出後改善 #2 (2026-06-09): route と OpenAIProvider のシグネチャ互換のため
+  //   optional `signal` 引数を追加する。**Anthropic provider は本 dispatch では凍結対象**
+  //   — 内部実装(MessageStream の abort 伝搬)は同期しない(引数は受け取るが無視)。
+  //   Anthropic 経路は v2 切戻し / 障害時 fallback 用のため、破棄 refresh の課金停止
+  //   (OpenAI streaming 切断による生成停止)は実装しない。将来 Anthropic を主経路に
+  //   戻す場合に同じ配線で signal を MessageStream に渡せるよう、引数だけ整える。
+  //   (`_signal` は underscore prefix で意図的未使用、lint の no-unused-vars 許容パターン)
   analyzeInitialStream(
     input: AnalyzeInput,
+    _signal?: AbortSignal,
   ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
     if (input.mode !== "initial") {
       throw new LLMError(
@@ -659,8 +667,11 @@ export class AnthropicProvider implements LLMProvider {
   //
   // event 種別の reuse: started.mode = "refresh" 以外は initial と同形(AnalyzeStreamEvent
   // 型定義の started を union に拡張、Step 2 の DECISION で記録)。
+  // 提出後改善 #2 (2026-06-09): 凍結対象。optional `signal` はシグネチャ互換のためだけに
+  //   受け取り、内部では無視する(課金停止の OpenAI streaming 切断は OpenAIProvider のみ)。
   analyzeRefreshStream(
     input: AnalyzeInput,
+    _signal?: AbortSignal,
   ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
     if (input.mode !== "refresh") {
       throw new LLMError(
@@ -689,8 +700,11 @@ export class AnthropicProvider implements LLMProvider {
   //   - completed event の result は PartialAnalysisResult(span 解決済 + display_priority 付与済)。
   //   - completed.kind = "partial"(client / route 側で AnalysisResultSchema ではなく
   //     PartialAnalysisResultSchema で検証する判別)
+  // 提出後改善 #2 (2026-06-09): 凍結対象。optional `signal` はシグネチャ互換のためだけに
+  //   受け取り、内部では無視する(課金停止の OpenAI streaming 切断は OpenAIProvider のみ)。
   analyzePartialStream(
     input: AnalyzeInput,
+    _signal?: AbortSignal,
   ): AsyncGenerator<AnalyzeStreamEvent, void, void> {
     if (input.mode !== "partial") {
       throw new LLMError(
