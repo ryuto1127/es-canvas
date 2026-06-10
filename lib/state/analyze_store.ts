@@ -36,12 +36,17 @@ import type {
   PartialAnalysisResult,
 } from "@/lib/schema/analysis";
 import type {
+  AcceptedSuggestionSummary,
   ActionHistoryEntry,
   AnalyzeInputBundleInitial,
   AnalyzeInputBundlePartial,
   AnalyzeInputBundleRefresh,
   EditingPreset,
+  InterviewInputBundle,
 } from "@/lib/schema/input";
+// 提出後改善 #1 (2026-06-09): 面接質問の再生成 (/api/interview) で
+// analysisResult.interview_questions を置換するため InterviewQuestions 型を参照。
+import type { InterviewQuestions } from "@/lib/schema/interview";
 // v2 Phase B3 (2026-05-26): structural カテゴリ採用時の派生 ES 生成
 // (client side 機械適用、AI hallucination 回避)。
 import { applyStructuralOperation } from "@/lib/state/structural_ops";
@@ -167,6 +172,20 @@ export type StreamingStage =
 // 注: 「古いバージョンの応答を破棄した」ケースは error ではなく成功裏に discard する
 // (refreshPhase は再度 loading に上書きされる、UI には何も出さない)。
 export type RefreshPhase = "idle" | "loading" | "error";
+
+// -----------------------------------------------------------------------------
+// Interview refresh phase (提出後改善 #1, 2026-06-09): 面接質問の再生成を別軸で管理
+// -----------------------------------------------------------------------------
+// 面接質問の再生成(/api/interview)は initial 分析 / refresh / partial とは独立した
+// 単発の非同期呼び出し。RefreshPhase と同じ 3 値モデルを採るが、refresh 並行制御
+// (version 整合 / abort)は伴わない単純な loading / error フラグ:
+//   - "idle":    再生成 未実行(初期 / 完了直後)
+//   - "loading": /api/interview 呼び出し中(InterviewPanel のボタンを無効化 + 進行表示)
+//   - "error":   最後の再生成が失敗した(missing_api_key / rate_limit / 検証失敗等)
+//
+// refresh / partial が in-flight の間は InterviewPanel 側でボタンを無効化するため、
+// 本フェーズと refreshPhase / partialRefreshInProgress の同時 loading は起こさない。
+export type InterviewRefreshPhase = "idle" | "loading" | "error";
 
 // -----------------------------------------------------------------------------
 // Conflict notification (Phase G Step 3b-3, 2026-05-23)
@@ -863,6 +882,18 @@ export interface AnalyzeStore {
   analyzeGoal: AnalyzeGoal;
 
   // ---------------------------------------------------------------------------
+  // 面接質問の再生成 (提出後改善 #1, 2026-06-09)
+  // ---------------------------------------------------------------------------
+  // /api/interview を UI から呼ぶ経路の loading / error フラグ。refresh とは別軸
+  // (version 整合 / abort を伴わない単発呼び出し)。InterviewPanel が購読し、
+  // 「質問を更新」ボタンの無効化 / 進行表示 / エラー導線(missing_api_key →
+  // 「設定を開く」)に使う。localStorage には載せない(他の transient 状態と同じ)。
+  //  - interviewRefreshPhase: "idle" | "loading" | "error"
+  //  - interviewRefreshError:  最後の失敗の ServerError(kind を握りつぶさず保持)
+  interviewRefreshPhase: InterviewRefreshPhase;
+  interviewRefreshError: ServerError | null;
+
+  // ---------------------------------------------------------------------------
   // 即時 partial refresh trigger + redoStack + 競合通知 (Phase G 修正 2026-05-23)
   // ---------------------------------------------------------------------------
   // 即時 partial refresh trigger:
@@ -1281,6 +1312,19 @@ export interface AnalyzeStore {
   applyPartialResult: (result: PartialAnalysisResult) => void;
   setRefreshError: (err: ServerError) => void;
   finishRefresh: () => void;
+  // 提出後改善 #1 (2026-06-09): 面接質問の再生成 (/api/interview) 用 actions。
+  //  - beginInterviewRefresh: 呼び出し直前に interviewRefreshPhase = "loading" /
+  //    interviewRefreshError = null をセットする(ボタン無効化 + 進行表示の起点)。
+  //  - applyInterviewQuestions: 応答で受け取った InterviewQuestions(is_stale=false /
+  //    generated_at_es_version はサーバ付与)で analysisResult.interview_questions を
+  //    置換し、interviewRefreshPhase = "idle" に戻す。analysisResult が null のとき
+  //    (理論上不到達)は phase だけ idle に戻す。以後の refresh / partial で再び
+  //    is_stale=true になるのは正しい挙動なので変えない。
+  //  - setInterviewRefreshError: 失敗を記録し interviewRefreshPhase = "error"。
+  //    ServerError の kind をそのまま保持(missing_api_key 導線等の分岐に使う)。
+  beginInterviewRefresh: () => void;
+  applyInterviewQuestions: (questions: InterviewQuestions) => void;
+  setInterviewRefreshError: (err: ServerError) => void;
   // 2026-05-25 Task #18: partial refresh stream の begin / cleanup。
   //  - beginPartialRefresh: Canvas が partial 経路を選んだ時に呼ぶ。partialRefreshInProgress を
   //    true に立て、seedIds を partialRefreshSeedIds にコピーする(UI が seed loading 表示用)。
@@ -1846,6 +1890,11 @@ const REFRESH_RESET_STATE = {
   // 指定したら "reduce_length" に切り替わり、finishRefresh / next beginRefresh の
   // 起点で "balanced" に戻す(明示的にリセットしない場合は前回の値を保持)。
   analyzeGoal: "balanced" as AnalyzeGoal,
+  // 提出後改善 #1 (2026-06-09): 面接質問の再生成フラグ。新規分析 / セッションリセットで
+  // idle / null に戻す(refresh 並行制御 state と同じ揮発カテゴリ)。EditingSnapshot には
+  // 載せない(refreshPhase / refreshError と同じく snapshot 対象外、コメント参照)。
+  interviewRefreshPhase: "idle" as InterviewRefreshPhase,
+  interviewRefreshError: null as ServerError | null,
 };
 
 // -----------------------------------------------------------------------------
@@ -3979,6 +4028,38 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
       reEvaluatingSuggestionIds: [],
     }),
 
+  // ---------------------------------------------------------------------------
+  // 面接質問の再生成 (提出後改善 #1, 2026-06-09)
+  // ---------------------------------------------------------------------------
+  // beginInterviewRefresh: /api/interview を呼ぶ直前に loading に入る。前回エラーは消す。
+  beginInterviewRefresh: () =>
+    set({ interviewRefreshPhase: "loading", interviewRefreshError: null }),
+
+  // applyInterviewQuestions: 応答の InterviewQuestions で analysisResult.interview_questions
+  //   を丸ごと置換する。サーバが is_stale=false / generated_at_es_version=current_es_version を
+  //   付与済のため、そのまま採用すれば「最新 ES 基準・非 stale」状態になる。
+  //   analysisResult が null(理論上不到達 — 面接質問は分析後にしか出ない)の場合は phase の
+  //   復帰のみ行い、questions は捨てる(置換先が無いため)。
+  applyInterviewQuestions: (questions) =>
+    set((s) => {
+      if (s.analysisResult === null) {
+        return { interviewRefreshPhase: "idle", interviewRefreshError: null };
+      }
+      return {
+        analysisResult: {
+          ...s.analysisResult,
+          interview_questions: questions,
+        },
+        interviewRefreshPhase: "idle",
+        interviewRefreshError: null,
+      };
+    }),
+
+  // setInterviewRefreshError: 再生成失敗を記録。kind を握りつぶさず保持する
+  //   (InterviewPanel が missing_api_key を見て「設定を開く」導線を出すため)。
+  setInterviewRefreshError: (err) =>
+    set({ interviewRefreshPhase: "error", interviewRefreshError: err }),
+
   // 2026-05-28 dogfood round 3 ②④: clearReEvaluating
   //   編集して採用 → semantic-diff が「同じ」と判定して refresh を skip した経路で、
   //   Canvas が呼んで予測 mark を取り消す(refresh が走らないため他の clear 点が発火しない)。
@@ -5801,4 +5882,100 @@ export function buildPartialBundle(args: {
     bundle.edit_after = args.editAfter;
   }
   return bundle;
+}
+
+// -----------------------------------------------------------------------------
+// 提出後改善 #1 (2026-06-09): accepted_suggestions_summary の導出
+// -----------------------------------------------------------------------------
+// 面接質問の入力 (InterviewInputBundle.accepted_suggestions_summary) は
+// 「採用された指摘の方向性」の 1 行表現 ({ suggestion_id, direction }) の配列。
+//
+// buildRefreshBundle が `action_history` を store.actionHistory からそのまま渡すのと
+// 同じソース(actionHistory)から導出する(別の真実源を増やさない):
+//   - verb が ACCEPTED / EDITED の entry を「方向性を採用した」とみなす
+//     (REJECTED / PENDING / DIRECT_EDIT は方向性の採用ではないため除外)
+//   - direction には entry.suggestion_summary をそのまま使う(refresh の action_history が
+//     同じ suggestion_summary を LLM に渡すのと整合する表現)
+//   - 同一 suggestion_id が複数回現れる場合は **最後の出現** を採る(後の EDITED が
+//     先の ACCEPTED のサマリを上書きする = 最新の意図を反映)
+//   - 派生 ES (getDerivedEsBody) は acceptedSuggestionIds / editedSuggestions を読むため、
+//     表示中の ES と整合させるべく「現在 採用 or 編集済の id」だけに絞る
+//     (却下 / undo で外れた id は actionHistory に痕跡が残っても summary には含めない)
+//
+// `acceptedIds` / `editedMap` を渡さない呼び出し(テスト等)では絞り込みを行わず
+// actionHistory 由来の全 ACCEPTED / EDITED を返す(後方互換の緩い既定)。
+export function deriveAcceptedSuggestionsSummary(
+  actionHistory: ReadonlyArray<ActionHistoryEntry>,
+  liveAcceptedOrEditedIds?: ReadonlySet<string>,
+): AcceptedSuggestionSummary[] {
+  // 最後の出現を採るため、id → direction の Map に順次上書きで詰める
+  // (Map は挿入順を保持するので、最終的な配列順は「最初に登場した順」になる)。
+  const byId = new Map<string, string>();
+  for (const entry of actionHistory) {
+    if (entry.verb !== "ACCEPTED" && entry.verb !== "EDITED") continue;
+    // DIRECT_EDIT は suggestion_id を持たない(verb narrowing で除外済)。
+    byId.set(entry.suggestion_id, entry.suggestion_summary);
+  }
+  const result: AcceptedSuggestionSummary[] = [];
+  for (const [suggestion_id, direction] of byId) {
+    if (
+      liveAcceptedOrEditedIds !== undefined &&
+      !liveAcceptedOrEditedIds.has(suggestion_id)
+    ) {
+      continue;
+    }
+    result.push({ suggestion_id, direction });
+  }
+  return result;
+}
+
+// -----------------------------------------------------------------------------
+// 提出後改善 #1 (2026-06-09): Bundle 構築 — store state → InterviewInputBundle
+// -----------------------------------------------------------------------------
+// 「質問を更新」ボタン(InterviewPanel)から /api/interview を呼ぶための bundle 組立。
+// buildRefreshBundle / buildPartialBundle と同じ共通部品を再利用する(コピペしない):
+//   - char_limit: parseCharLimit(refresh / partial / initial と同じ正規化)
+//   - question:   form.question_text + char_limit
+//   - company_summary / edit_conditions: form / companySummary から(refresh と同形)
+//   - user_context: appendClarificationToUserContext(refresh / partial と同じ規約。
+//     通常は clarificationEnrichedIntent を渡さないため form.user_context のまま)
+//   - current_es_version: 現在の client ES version(baseVersion)
+//   - accepted_suggestions_summary: deriveAcceptedSuggestionsSummary(上記参照、
+//     buildRefreshBundle の action_history と同じ actionHistory ソースから導出)
+//
+// es_body は呼び出し側 (InterviewPanel) が refresh と同じ派生 ES (getDerivedEsBody の結果)を
+// 算出して渡す(buildRefreshBundle と同じく「現在のユーザーの ES」を LLM に見せる)。
+export function buildInterviewBundle(args: {
+  form: FormState;
+  companySummary: CompanySummary | undefined;
+  esBody: string;
+  actionHistory: ActionHistoryEntry[];
+  baseVersion: number;
+  // 派生 ES と整合させるための「現在 採用 or 編集済」id 集合(省略時は絞り込みなし)。
+  liveAcceptedOrEditedIds?: ReadonlySet<string>;
+  // 通常 interview では undefined。clarification 回答を user_context に append したい場合のみ。
+  clarificationEnrichedIntent?: string;
+}): InterviewInputBundle {
+  const char_limit = parseCharLimit(args.form.char_limit);
+  return {
+    es_body: args.esBody,
+    question: {
+      text: args.form.question_text,
+      char_limit,
+    },
+    company_summary: args.companySummary,
+    edit_conditions: {
+      preset: args.form.preset,
+      free_text: args.form.free_text,
+    },
+    accepted_suggestions_summary: deriveAcceptedSuggestionsSummary(
+      args.actionHistory,
+      args.liveAcceptedOrEditedIds,
+    ),
+    user_context: appendClarificationToUserContext(
+      args.form.user_context,
+      args.clarificationEnrichedIntent,
+    ),
+    current_es_version: args.baseVersion,
+  };
 }

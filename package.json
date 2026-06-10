@@ -20,7 +20,8 @@
     "test:ordering": "tsx tests/suggestion_ordering.test.ts",
     "test:initial": "tsx tests/initial_user_message.test.ts",
     "test:byok": "tsx tests/byok.test.ts",
-    "test:form": "tsx tests/form_validation.test.ts"
+    "test:form": "tsx tests/form_validation.test.ts",
+    "test:interview-bundle": "tsx tests/interview_bundle.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
