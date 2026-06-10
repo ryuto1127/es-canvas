@@ -252,6 +252,19 @@ The limitations left in this 10-day v1, stated openly. Each is paired with the v
 
 ---
 
+## How this was built — working with AI
+
+The tool itself implements "AI proposes options; the human makes the final call" — and **the development process followed the same principle**.
+
+- **Division of roles**: the human focused on decisions and direction. AI was split into three roles — an orchestrator handling dialogue, design, and written work orders; an implementer that only writes code; and an evaluator that independently inspects every commit (a separate AI from the one that wrote it).
+- **What the human kept**: approving strategy, choosing trade-offs, and the final call on every public push. AI proposals were never accepted as-is — options and their trade-offs had to be laid out first.
+- **Discipline**: every non-trivial decision is recorded with its rationale and rejected alternatives in a decision log (10,000+ lines, private). Type checks + lint + 300+ offline tests before each commit, an independent AI review after it, and a confidentiality check before each push.
+- **Accumulated learning**: a cross-session knowledge base that structurally separates *verified facts* from *unverified hypotheses*, so later sessions don't re-derive the same lessons.
+
+Most of the implementation code was written by AI — but what to build, what not to build, and which trade-offs to take were human decisions.
+
+---
+
 ## Documents
 
 - [`docs/design_notes.md`](docs/design_notes.md) — rejected UI alternatives / test-data design / the structural category
