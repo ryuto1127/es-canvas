@@ -440,8 +440,10 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
   // 経路で立つ partialRefreshTrigger を観測した時に handleRefresh 内で buildClarificationEnrichedIntent
   // を呼んで bundle に渡す)。
   const clarificationAnswers = useAnalyzeStore((s) => s.clarificationAnswers);
-  // 統合改修パッケージ (2026-05-25): 動的 HITL の影響範囲指定 + 意味的差分判定 queue を購読
-  const pendingRefreshScope = useAnalyzeStore((s) => s.pendingRefreshScope);
+  // 統合改修パッケージ (2026-05-25): 意味的差分判定 queue を購読。
+  // 提出後改善 #2 (2026-06-09): pendingRefreshScope の selector 購読は撤去。handleRefresh は
+  //   beginRefresh が返す consumedScope(store スナップショット)で scope を読むため、
+  //   component 再 render を scope 変化にひも付ける必要がなくなった。
   const semanticDiffQueue = useAnalyzeStore((s) => s.semanticDiffQueue);
   const dequeueSemanticDiff = useAnalyzeStore((s) => s.dequeueSemanticDiff);
   const requestPartialRefresh = useAnalyzeStore((s) => s.requestPartialRefresh);
@@ -737,6 +739,10 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
         // 2026-05-28 並行性 fix C8: この refresh の世代 id。下の遅延 cleanup timer の
         // クロージャに焼き、commitPartialRefreshCleanup(generation) に渡す。
         generation: refreshGeneration,
+        // 提出後改善 #2 (2026-06-09): この refresh が消化する pendingRefreshScope の参照。
+        // 成功適用時に applyPartialResult / applyRefreshResult へ渡し、reference-equality で
+        // 消化する(in-flight 中に新 scope がマージされていたら clear しない = 再評価が消えない)。
+        consumedScope,
       } = beginRefresh({
         goal,
       });
@@ -747,8 +753,14 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
       //  - その他(scope=null / 旧経路の互換) → 従来の partial 経路
       // 統合改修パッケージ訂正 (2026-05-25): 構造計算(refresh_scope.ts:computeRefreshScope)
       // を撤去し、AI 判断方式に変更。サーバから LLM に渡すのは seed id / edit_before / edit_after のみ。
+      //
+      // 提出後改善 #2 (2026-06-09): scope の読み取りを closure の `pendingRefreshScope`
+      // (render 時スナップショット)から `consumedScope`(beginRefresh が get() で原子的に
+      // 捕捉した store スナップショット)に変更。これにより「この request が使う seed」と
+      // 「成功時に消化する scope」が同一オブジェクトになり、render 時 staleness と
+      // union マージ後の seed 取りこぼしを防ぐ(マージで膨らんだ seedIds がそのまま送られる)。
       const wantsFullRefresh =
-        pendingRefreshScope !== null && pendingRefreshScope.kind === "full";
+        consumedScope !== null && consumedScope.kind === "full";
 
       const canUsePartial =
         confirmedGoal === "balanced" &&
@@ -769,14 +781,14 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
       let editAfter: string | undefined;
       if (
         canUsePartial &&
-        pendingRefreshScope !== null &&
-        pendingRefreshScope.kind === "scoped"
+        consumedScope !== null &&
+        consumedScope.kind === "scoped"
       ) {
-        seedSuggestionIds = pendingRefreshScope.seedIds;
+        seedSuggestionIds = consumedScope.seedIds;
         // PendingRefreshScope.reason は "accept" を含むが、partial 経路では accept は発火しない。
         // 万一 reason === "accept" になっても seed_action_type schema には含まれないため、
         // "manual" にフォールバックする(防御的)。
-        const reason = pendingRefreshScope.reason;
+        const reason = consumedScope.reason;
         seedActionType =
           reason === "reject" ||
           reason === "edit" ||
@@ -786,8 +798,8 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
           reason === "manual"
             ? reason
             : "manual";
-        editBefore = pendingRefreshScope.editBefore;
-        editAfter = pendingRefreshScope.editAfter;
+        editBefore = consumedScope.editBefore;
+        editAfter = consumedScope.editAfter;
       }
 
       // 2026-05-27 エージェント的対話(AI 逆質問): 回答済 clarificationAnswers を
@@ -848,7 +860,8 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
 
       if (result.ok) {
         if (result.kind === "partial") {
-          applyPartialResult(result.result);
+          // 提出後改善 #2 (2026-06-09): consumedScope を渡して scope を reference-equality 消化。
+          applyPartialResult(result.result, consumedScope);
           // 2026-05-25 Task #18: 1.5 秒の fade out animation 後に deleted を suggestions から
           // 実除外 + recently* / seed flags をクリア。Inviolable constraints:
           // 「すべての操作は Undo 可能」を満たすため、fade out 中も Undo / 履歴 revert で
@@ -860,7 +873,8 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
             commitPartialRefreshCleanup(refreshGeneration);
           }, 1500);
         } else {
-          applyRefreshResult(result.result);
+          // 提出後改善 #2 (2026-06-09): consumedScope を渡して scope を reference-equality 消化。
+          applyRefreshResult(result.result, consumedScope);
         }
         // apply* が成功時に inflight / abort / phase をクリーンアップ
         // (古いバージョン破棄ケースでも no-op で抜けるが、ユーザー観測上はクリーン)
@@ -892,9 +906,11 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
       editedSuggestions,
       finishRefresh,
       form,
-      // 統合改修パッケージ (2026-05-25): pendingRefreshScope を dep に含める
-      // (scope.kind / seedIds を読んで focus を構築するため)
-      pendingRefreshScope,
+      // 提出後改善 #2 (2026-06-09): pendingRefreshScope を dep から除外。handleRefresh は
+      // もはや closure の pendingRefreshScope を読まず、beginRefresh が返す consumedScope
+      // (store スナップショット)を使う。scope は store action の union マージで蓄積され、
+      // beginRefresh が fire 時点で原子的に読み取るため、handler を scope 変化に再生成
+      // する必要がない(staleness なし)。
       rejectedSuggestionIds,
       setRefreshError,
       setRefreshStreamingStage,

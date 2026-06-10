@@ -560,6 +560,86 @@ export interface PendingRefreshScope {
   editAfter?: string;
 }
 
+// =============================================================================
+// mergeRefreshScope (提出後改善 #2 2026-06-09)— pendingRefreshScope の union マージ
+// =============================================================================
+// 背景(何が壊れていたか): 従来 `pendingRefreshScope` は操作のたびに **上書き** されて
+//   いた。refresh のレイテンシより速いペースで操作すると、先行操作の seed に対する
+//   scoped 再評価が自動では二度と走らない(全 action_history は後続 bundle に載るため
+//   文脈は届くが、focus した再評価と「再評価中」バッジが無言で消える)。
+//
+// 修正: 上書きの代わりに **union マージ**。in-flight 中の操作が前の未消化 scope を
+//   引き継ぎ、再評価が消えない。
+//
+// マージ規則(不変条件):
+//   1. seedIds: 和集合(重複は除去、順序は prev → next の出現順)。
+//   2. kind: 優先則 `full > scoped`(どちらかが full なら full)。full は影響範囲を
+//      限定しない全体再分析であり、scoped の部分再評価を包含する。
+//   3. reason: 最新の操作(next)の reason を採る。reason は prompt 文言調整にのみ使う
+//      補助情報で、複数操作の union を 1 語で表せないため「直近の操作意図」を代表値とする
+//      (full マージ時は kind=full 側で refresh stream 経路が選ばれ reason は影響しない)。
+//   4. editBefore / editAfter: 最新(next)が持っていればそれを、無ければ prev のものを
+//      残す(edit / direct_edit 経路の編集差分。複数 edit の union は表現できないため
+//      直近の差分を代表とする。全 action_history は bundle に別途載るため文脈は届く)。
+//
+//   prev === null(未消化 scope 無し)なら next をそのまま返す(初回操作 = 従来と同一挙動)。
+//
+// 消化のタイミング(不変条件、beginRefresh / applyResult 側で実現):
+//   - fetch 成功で apply された時のみ clear(pendingRefreshScope = null)。ただし
+//     in-flight 中に新 scope がマージされていた場合は clear しない(reference 比較で判定、
+//     beginRefresh が consumedScope を捕捉 → applyResult が `現在 scope === consumedScope`
+//     のときだけ null 化)。
+//   - abort では clear しない(次の trigger が引き継ぐ)。
+//   - version mismatch(conflict)でも clear しない(再評価意図は未消化のまま残す)。
+export function mergeRefreshScope(
+  prev: PendingRefreshScope | null,
+  next: PendingRefreshScope,
+): PendingRefreshScope {
+  if (prev === null) return next;
+  // seedIds: 和集合(順序安定、重複除去)
+  const mergedSeedIds = Array.from(new Set([...prev.seedIds, ...next.seedIds]));
+  // kind: full 優先(どちらかが full なら full)
+  const mergedKind: PendingRefreshScope["kind"] =
+    prev.kind === "full" || next.kind === "full" ? "full" : "scoped";
+  // editBefore / editAfter: next 優先、無ければ prev を温存
+  const mergedEditBefore =
+    next.editBefore !== undefined ? next.editBefore : prev.editBefore;
+  const mergedEditAfter =
+    next.editAfter !== undefined ? next.editAfter : prev.editAfter;
+  return {
+    kind: mergedKind,
+    seedIds: mergedSeedIds,
+    // reason は直近操作(next)を代表値に採る
+    reason: next.reason,
+    ...(mergedEditBefore !== undefined && { editBefore: mergedEditBefore }),
+    ...(mergedEditAfter !== undefined && { editAfter: mergedEditAfter }),
+  };
+}
+
+// =============================================================================
+// mergeReEvaluatingIds (提出後改善 #2 2026-06-09)— 再評価中バッジの union 整合
+// =============================================================================
+// pendingRefreshScope を union マージするのと対称に、「再評価中」バッジの id 集合も
+// union する。これにより in-flight 中の後続操作が前の refresh を abort しても、先行
+// seed のバッジ(SuggestionCard の「再評価中」表示)が消えない(scope と整合)。
+//
+// 規則:
+//   - prevScope !== null(未消化 scope を引き継ぐ)→ 先行 reEvaluating と今回分を union。
+//   - prevScope === null(前の refresh が消化済 = clear 済)→ 今回分のみ(union しない、
+//     完了済の古いバッジを蒸し返さない)。
+//   - 重複は除去、順序は prev → next の初出順。
+//
+// scope のマージ条件(prev === null か否か)と判定軸を完全に一致させることで、
+// 「scope は引き継ぐがバッジは消える / その逆」という不整合を構造的に防ぐ。
+export function mergeReEvaluatingIds(
+  prevScope: PendingRefreshScope | null,
+  prevReEvaluating: ReadonlyArray<string>,
+  nextReEvaluating: ReadonlyArray<string>,
+): string[] {
+  if (prevScope === null) return [...nextReEvaluating];
+  return Array.from(new Set([...prevReEvaluating, ...nextReEvaluating]));
+}
+
 // -----------------------------------------------------------------------------
 // Server error shape — /api/* の error レスポンスを正規化
 // -----------------------------------------------------------------------------
@@ -1301,15 +1381,30 @@ export interface AnalyzeStore {
     // 2026-05-28 並行性 fix C8: この refresh の世代 id。Canvas が partial cleanup timer の
     // クロージャに焼いて commitPartialRefreshCleanup(generation) に渡す。
     generation: number;
+    // 提出後改善 #2 (2026-06-09): この refresh が消化する pendingRefreshScope のスナップショット
+    // (参照)。applyPartialResult / applyRefreshResult に渡し、成功時に「現在 scope ===
+    // この参照」のときだけ scope を clear する(in-flight 中に新 scope がマージされていたら
+    // 参照が変わるため clear しない = 再評価が消えない)。null は「消化対象 scope なし」。
+    consumedScope: PendingRefreshScope | null;
   };
   setRefreshStreamingStage: (stage: StreamingStage) => void;
-  applyRefreshResult: (result: AnalysisResult) => void;
+  // 提出後改善 #2 (2026-06-09): consumedScope は beginRefresh が返したスナップショット。
+  // 成功適用時に「現在 pendingRefreshScope === consumedScope」なら scope を clear する
+  // (in-flight 中に新 scope がマージされていたら参照が変わり clear しない = 再評価が消えない)。
+  // 省略時(旧 caller / undefined)は clear しない(後方互換、scope は次の操作で上書きマージ)。
+  applyRefreshResult: (
+    result: AnalysisResult,
+    consumedScope?: PendingRefreshScope | null,
+  ) => void;
   // Phase G Step 3b-2 (2026-05-23): partial 結果を既存 analysisResult にマージ。
   // 楽観的並行制御の version 整合は applyRefreshResult と同じ規律。merge ロジックは
   // updated/deleted/added 経路で既存 suggestions セットを更新する。
   // 2026-05-25 Task #18: partialRefreshInProgress == true の場合は deleted を即除外せず
   // pendingDeletedSuggestionIds に控える(fade out animation 用)。
-  applyPartialResult: (result: PartialAnalysisResult) => void;
+  applyPartialResult: (
+    result: PartialAnalysisResult,
+    consumedScope?: PendingRefreshScope | null,
+  ) => void;
   setRefreshError: (err: ServerError) => void;
   finishRefresh: () => void;
   // 提出後改善 #1 (2026-06-09): 面接質問の再生成 (/api/interview) 用 actions。
@@ -2333,12 +2428,21 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         // 関連なしは scoped refresh skip = 何も再評価されないため空のまま(reEvaluating も無変更)。
         ...(shouldTriggerScopedRefresh && {
           partialRefreshTrigger: s.partialRefreshTrigger + 1,
-          pendingRefreshScope: {
+          // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ。in-flight 中の
+          // 未消化 scope を引き継ぎ、先行 seed の再評価が消えないようにする。
+          pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
             kind: "scoped" as const,
             seedIds: [input.suggestion_id, ...relatedIds],
             reason: "accept_with_related" as const,
-          },
-          reEvaluatingSuggestionIds: reEvaluatingIds,
+          }),
+          // 提出後改善 #2 (2026-06-09): バッジも scope と整合させる。未消化 scope を
+          // 引き継ぐとき(pendingRefreshScope !== null)は先行 reEvaluating と union し、
+          // 先行 seed のバッジが消えないようにする。消化済(null)なら今回分だけ。
+          reEvaluatingSuggestionIds: mergeReEvaluatingIds(
+            s.pendingRefreshScope,
+            s.reEvaluatingSuggestionIds,
+            reEvaluatingIds,
+          ),
         }),
       };
     });
@@ -2434,13 +2538,19 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         //  → 影響範囲限定モードで partial refresh を発火(scoped、seed = この id)。
         // pendingRefreshScope に scope を保存して trigger を +1。
         partialRefreshTrigger: s.partialRefreshTrigger + 1,
-        pendingRefreshScope: {
+        // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+        pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
           kind: "scoped",
           seedIds: [input.suggestion_id],
           reason: "reject",
-        },
+        }),
         // 2026-05-28 dogfood round 3 ④: 再評価中の指摘群を mark(badge 表示用)。
-        reEvaluatingSuggestionIds: reEvaluatingIds,
+        // 提出後改善 #2 (2026-06-09): scope と整合させ、未消化 scope を引き継ぐとき union。
+        reEvaluatingSuggestionIds: mergeReEvaluatingIds(
+          s.pendingRefreshScope,
+          s.reEvaluatingSuggestionIds,
+          reEvaluatingIds,
+        ),
       };
     });
   },
@@ -2558,7 +2668,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         semanticDiffQueue: [...s.semanticDiffQueue, diffEntry],
         // 2026-05-28 dogfood round 3 ④: 再評価中の指摘群を mark(badge は refresh 開始後に出る)。
         // semantic-diff skip 時は Canvas が clearReEvaluating() で取り消す。
-        reEvaluatingSuggestionIds: reEvaluatingIds,
+        // 提出後改善 #2 (2026-06-09): scope と整合させ、未消化 scope を引き継ぐとき union。
+        reEvaluatingSuggestionIds: mergeReEvaluatingIds(
+          s.pendingRefreshScope,
+          s.reEvaluatingSuggestionIds,
+          reEvaluatingIds,
+        ),
       };
     });
   },
@@ -2911,11 +3026,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         // 統合改修パッケージ (2026-05-25): Undo は「やっぱり違う」のシグナル → 影響範囲限定 partial を発火。
         //   seedIds は popped 内の reject / edit 対象を抽出(undo した変更が再評価範囲の起点になる)。
         partialRefreshTrigger: s.partialRefreshTrigger + 1,
-        pendingRefreshScope: {
+        // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+        pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
           kind: "scoped",
           seedIds: collectSeedIdsFromEntries(popped),
           reason: "undo",
-        },
+        }),
       };
     });
     // didChange は将来の用途のため保持(本リファクタで使われていない)
@@ -3086,11 +3202,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         clientEsVersion: s.clientEsVersion + 1,
         // 統合改修パッケージ (2026-05-25): Redo は「やっぱりこちら」のシグナル → 影響範囲限定 partial。
         partialRefreshTrigger: s.partialRefreshTrigger + 1,
-        pendingRefreshScope: {
+        // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+        pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
           kind: "scoped",
           seedIds: collectSeedIdsFromEntries(popped),
           reason: "redo",
-        },
+        }),
       };
     });
     void didChange;
@@ -3162,11 +3279,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         clientEsVersion: s.clientEsVersion + 1,
         // 統合改修パッケージ (2026-05-25): 自動修正取り消しは reject 相当 → 影響範囲限定 partial。
         partialRefreshTrigger: s.partialRefreshTrigger + 1,
-        pendingRefreshScope: {
+        // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+        pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
           kind: "scoped",
           seedIds: [input.suggestion_id],
           reason: "reject",
-        },
+        }),
       };
     });
     void didChange;
@@ -3252,11 +3370,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         clientEsVersion: s.clientEsVersion + 1,
         // 統合改修パッケージ (2026-05-25): 一括取り消しは複数 seed → 影響範囲限定 partial。
         partialRefreshTrigger: s.partialRefreshTrigger + 1,
-        pendingRefreshScope: {
+        // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+        pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
           kind: "scoped",
           seedIds: validInputs.map((i) => i.suggestion_id),
           reason: "reject",
-        },
+        }),
       };
     });
     void didChange;
@@ -3351,11 +3470,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         clientEsVersion: s.clientEsVersion + 1,
         // 影響範囲限定 partial refresh を発火(AI に「ユーザーがこの id を再評価したい」と伝える)
         partialRefreshTrigger: s.partialRefreshTrigger + 1,
-        pendingRefreshScope: {
+        // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+        pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
           kind: "scoped",
           seedIds: [id],
           reason: "manual",
-        },
+        }),
       };
     });
   },
@@ -3393,6 +3513,10 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
     // 2026-05-28 並行性 fix C8: 世代を 1 つ進める。partial cleanup timer が後続 refresh の
     // flags を消す競合を防ぐため、Canvas は本戻り値の generation を timer に焼く。
     const generation = state.partialRefreshGeneration + 1;
+    // 提出後改善 #2 (2026-06-09): この refresh が消化する scope のスナップショット(参照)。
+    // 成功時の reference-equality clear に使う(beginRefresh は scope を上書き / clear しない
+    // — それは結果適用 or 後続操作のマージに委ねる)。
+    const consumedScope = state.pendingRefreshScope;
 
     set({
       refreshAbortController: abortController,
@@ -3404,7 +3528,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
       partialRefreshGeneration: generation,
     });
 
-    return { abortController, baseVersion, goal, generation };
+    return { abortController, baseVersion, goal, generation, consumedScope };
   },
 
   // setRefreshStreamingStage: SSE 受信ループから細分化進捗を更新(initial の
@@ -3437,7 +3561,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   //     残骸を残さない、refresh は新 suggestions セットで開始するため)
   //   - acceptedSuggestionIds は既存のユーザー操作(明示採用)に新規 auto error を
   //     マージ(union、重複は除外)
-  applyRefreshResult: (result) => {
+  applyRefreshResult: (result, consumedScope) => {
     // 2026-05-28 capture(dev 専用): set 前の analysisResult 参照を保持。set 後に参照が
     // 変わっていれば「結果が反映された」= append。version mismatch(conflictNotification 経路)
     // では analysisResult を更新しないため参照が同一 → append されない(意図通り)。
@@ -3582,6 +3706,13 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         autoCorrectedSuggestionIds: autoCorrectedIds,
         // 2026-05-27 エージェント的対話(AI 逆質問): デッドリンク回答 cleanup
         clarificationAnswers: filteredClarificationAnswers,
+        // 提出後改善 #2 (2026-06-09): scope 消化。この refresh が消化した scope が
+        // 今も未変更で残っている(reference 一致)ときだけ clear。in-flight 中に後続操作が
+        // 新 scope をマージしていたら参照が変わるため clear せず、次の trigger に引き継ぐ。
+        ...(consumedScope !== undefined &&
+          s.pendingRefreshScope === consumedScope && {
+            pendingRefreshScope: null,
+          }),
       };
     });
     // 2026-05-28 capture(dev 専用): 結果が実際に反映された(analysisResult 参照が変わった)
@@ -3620,7 +3751,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   // interview_questions:
   //  - partial 結果は interview_questions を返さない(load-bearing field 維持)。既存
   //    analysisResult.interview_questions の is_stale = true に更新する(refresh と同様)。
-  applyPartialResult: (result) => {
+  applyPartialResult: (result, consumedScope) => {
     // 2026-05-28 capture(dev 専用): set 前の analysisResult 参照を保持。set 後に参照が
     // 変わっていれば append。version mismatch / overall_assessment 不在(return {})では
     // analysisResult 不変 → append されない(意図通り)。
@@ -3884,6 +4015,14 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         // 完了が伝わるため重複通知を避ける、dispatch §「注意事項」)。
         refreshCompletedAt: Date.now(),
         ...animationPatch,
+        // 提出後改善 #2 (2026-06-09): scope 消化。この partial が消化した scope が今も
+        // 未変更で残っている(reference 一致)ときだけ clear。in-flight 中に後続操作が
+        // 新 scope をマージしていたら参照が変わるため clear せず、次の trigger に引き継ぐ
+        // (再評価が消えない)。animationPatch / refreshCompletedAt の後に置いて上書きを保証。
+        ...(consumedScope !== undefined &&
+          s.pendingRefreshScope === consumedScope && {
+            pendingRefreshScope: null,
+          }),
       };
     });
     // 2026-05-28 capture(dev 専用): partial 結果が反映された(analysisResult 参照が変わった)
@@ -4095,24 +4234,28 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   //  - 他の経路(reject / undo / redo / undoAutoCorrection 等)からも直接 set される代替経路
   //  - 内部で partialRefreshTrigger +1 + pendingRefreshScope を set
   //  - clientEsVersion は変更しない(対応する action 経路で既に +1 されているため)
+  //  - 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+  //    edit / direct_edit の seed と editBefore/editAfter が前の未消化 scope に union される。
   requestPartialRefresh: (scope) =>
     set((s) => ({
       partialRefreshTrigger: s.partialRefreshTrigger + 1,
-      pendingRefreshScope: scope,
+      pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, scope),
     })),
 
   // triggerFullRefresh: 「再分析」ボタン用、全体再分析を要求する高レベル action。
   //  - 影響範囲限定モードを無効化(kind: "full")
   //  - Canvas は scope.kind === "full" を見て refresh stream(全体)経路を選ぶ
   //  - clientEsVersion は変更しない(ユーザー操作ではなく明示的な再分析要求)
+  //  - 提出後改善 #2 (2026-06-09): union マージ。kind 優先則により full が未消化 scoped を
+  //    包含する(どちらかが full なら full)。先行 seed の再評価意図は全体再分析が吸収する。
   triggerFullRefresh: () =>
     set((s) => ({
       partialRefreshTrigger: s.partialRefreshTrigger + 1,
-      pendingRefreshScope: {
+      pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
         kind: "full",
         seedIds: [],
         reason: "manual",
-      },
+      }),
     })),
 
   // enqueueSemanticDiff: 意味的差分判定の queue に 1 entry を push(主に他コンポーネントから
@@ -4303,11 +4446,12 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
       redoLogStack: [],
       clientEsVersion: nextEsVersion,
       partialRefreshTrigger: s.partialRefreshTrigger + 1,
-      pendingRefreshScope: {
+      // 提出後改善 #2 (2026-06-09): 上書きではなく union マージ(未消化 scope を引き継ぐ)。
+      pendingRefreshScope: mergeRefreshScope(s.pendingRefreshScope, {
         kind: "scoped",
         seedIds: [],
         reason: "manual",
-      },
+      }),
     }));
   },
 
