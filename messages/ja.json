@@ -343,6 +343,9 @@
     "refresh_toast": {
       "completed": "指摘が更新されました"
     },
+    "structural_apply_failed_toast": {
+      "message": "この提案は現在の本文には適用できませんでした"
+    },
     "conflict_banner_title": "新しい分析結果があります",
     "conflict_banner_description": "操作中に届きました。表示するか、現在の選択を維持するかを選べます。",
     "conflict_banner_view_aria": "新しい分析結果を表示する",
@@ -358,9 +361,9 @@
     "conflict_modal_accept_new": "新版を採用",
     "conflict_modal_accept_new_aria": "新版を採用する",
     "conflict_modal_accept_new_desc": "新しい分析結果を全面的に反映します",
-    "conflict_modal_edit_new": "新版を編集して採用",
-    "conflict_modal_edit_new_aria": "新版を編集して採用する",
-    "conflict_modal_edit_new_desc": "新しい指摘を表示しつつ、個別に採用 / 編集 / 却下できます",
+    "conflict_modal_edit_new": "新版を採用して編集",
+    "conflict_modal_edit_new_aria": "新版を採用して本文の直接編集を開始する",
+    "conflict_modal_edit_new_desc": "新しい分析結果を反映し、そのまま本文の直接編集を開始します",
     "conflict_modal_keep_current": "現在の選択を維持",
     "conflict_modal_keep_current_aria": "現在の選択を維持する",
     "conflict_modal_keep_current_desc": "新しい結果を破棄し、現在の指摘リストを維持します"

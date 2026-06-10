@@ -20,6 +20,7 @@
 import { strict as assert } from "node:assert";
 import {
   applyStructuralOperation,
+  applyStructuralOperationWithStatus,
   splitParagraphs,
   splitSentences,
 } from "@/lib/state/structural_ops";
@@ -433,6 +434,144 @@ test("add_paragraph returns esBody unchanged when target index out of range", ()
     new_content: "C 段落 outline",
   });
   assert.equal(result, original);
+});
+
+// =============================================================================
+// applyStructuralOperationWithStatus: no-op 判別(提出後改善 #4、2026-06-10)
+// =============================================================================
+// applied の意味論: 「操作が実行できたか」であり「本文が変化したか」ではない。
+//  - 不正 index / 不正 permutation 等の防御的 no-op → applied: false(body は元のまま)
+//  - identity permutation のように「実行されたが結果が偶然元と同一」→ applied: true
+// acceptSuggestion はこの applied で「採用として記録するか」を分岐する
+// (no-op を ACCEPTED + version+1 として記録しない正直化)。
+process.stdout.write("[applyStructuralOperationWithStatus: no-op 判別]\n");
+
+test("delete_paragraph valid index returns applied: true with changed body", () => {
+  const result = applyStructuralOperationWithStatus("段落1\n\n段落2\n\n段落3", {
+    operation: "delete_paragraph",
+    target_paragraph_index: 1,
+  });
+  assert.equal(result.applied, true);
+  assert.equal(result.body, "段落1\n\n段落3");
+});
+
+test("delete_paragraph out-of-range index returns applied: false with body unchanged", () => {
+  const original = "段落1\n\n段落2";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "delete_paragraph",
+    target_paragraph_index: 5,
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("delete_paragraph negative index returns applied: false", () => {
+  const original = "A\n\nB";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "delete_paragraph",
+    target_paragraph_index: -1,
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("reorder_paragraphs invalid permutation (duplicate index) returns applied: false", () => {
+  const original = "A\n\nB\n\nC";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "reorder_paragraphs",
+    new_order: [0, 0, 1],
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("reorder_paragraphs length mismatch returns applied: false", () => {
+  const original = "A\n\nB\n\nC";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "reorder_paragraphs",
+    new_order: [1, 0],
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("reorder_paragraphs identity permutation returns applied: true (実行成功、本文同一)", () => {
+  // applied = 「操作が実行できたか」。identity でも valid permutation なら true。
+  const original = "A\n\nB\n\nC";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "reorder_paragraphs",
+    new_order: [0, 1, 2],
+  });
+  assert.equal(result.applied, true);
+  assert.equal(result.body, original);
+});
+
+test("merge_paragraphs out-of-range index returns applied: false", () => {
+  const original = "A\n\nB";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "merge_paragraphs",
+    target_paragraph_indices: [0, 9],
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("move_sentence out-of-range sentence index returns applied: false", () => {
+  const original = "P0文1。\n\nP1文1。";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "move_sentence",
+    source_paragraph_index: 0,
+    source_sentence_index: 7,
+    target_paragraph_index: 1,
+    target_position: "after",
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("move_sentence valid params returns applied: true", () => {
+  const result = applyStructuralOperationWithStatus("P0文1。P0文2。\n\nP1文1。", {
+    operation: "move_sentence",
+    source_paragraph_index: 0,
+    source_sentence_index: 1,
+    target_paragraph_index: 1,
+    target_position: "after",
+  });
+  assert.equal(result.applied, true);
+  assert.equal(result.body, "P0文1。\n\nP1文1。P0文2。");
+});
+
+test("add_paragraph out-of-range index returns applied: false", () => {
+  const original = "A\n\nB";
+  const result = applyStructuralOperationWithStatus(original, {
+    operation: "add_paragraph",
+    target_paragraph_index: 99,
+    target_position: "before",
+    new_content: "C 段落 outline",
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.body, original);
+});
+
+test("互換 wrapper: applyStructuralOperation は WithStatus().body と常に一致する", () => {
+  // 旧シグネチャ(string 返却)の互換性。成功 / no-op 両ケースで body が同じであること。
+  const okParams = {
+    operation: "delete_paragraph" as const,
+    target_paragraph_index: 0,
+  };
+  const noopParams = {
+    operation: "delete_paragraph" as const,
+    target_paragraph_index: 9,
+  };
+  const body = "A\n\nB";
+  assert.equal(
+    applyStructuralOperation(body, okParams),
+    applyStructuralOperationWithStatus(body, okParams).body,
+  );
+  assert.equal(
+    applyStructuralOperation(body, noopParams),
+    applyStructuralOperationWithStatus(body, noopParams).body,
+  );
 });
 
 // =============================================================================

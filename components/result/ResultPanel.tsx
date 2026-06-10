@@ -74,6 +74,7 @@ import { RightPanel } from "@/components/canvas/RightPanel";
 import { SummaryBar } from "@/components/canvas/SummaryBar";
 // v2 dogfood UX 改善 Task C (2026-05-26): partial refresh 完了の短時間 toast 通知
 import { RefreshCompletionToast } from "@/components/canvas/RefreshCompletionToast";
+import { StructuralApplyFailureToast } from "@/components/canvas/StructuralApplyFailureToast";
 
 // =============================================================================
 // Error display
@@ -473,6 +474,12 @@ function ResultPanelDoneLayout({
           store 側で partial refresh 経路のみ refreshCompletedAt を set する設計
           (applyRefreshResult / applyConflictNewVersion では立てない)。 */}
       <RefreshCompletionToast />
+
+      {/* 提出後改善 #4 (2026-06-10): structural 採用が現在の本文に適用できなかった
+          (防御的 no-op)ときのエラートーン toast。状態は何も変更されず suggestion は
+          PENDING のまま、という事実をユーザーに正直に通知する。fixed positioned のため
+          JSX 配置順は visual position に影響しない(画面右下に固定表示)。 */}
+      <StructuralApplyFailureToast />
     </div>
   );
 }

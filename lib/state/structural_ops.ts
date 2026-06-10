@@ -119,44 +119,73 @@ export function joinParagraphContents(pieces: string[]): string {
 }
 
 // =============================================================================
-// 5 operations の純粋関数(applyStructuralOperation)
+// 5 operations の純粋関数(applyStructuralOperationWithStatus / applyStructuralOperation)
 // =============================================================================
 
 /**
- * structural operation を適用して新しい ES 本文を返す。
+ * applyStructuralOperationWithStatus の戻り値(提出後改善 #4、2026-06-10)。
  *
- * - 不正 index / 不正 params の場合は **元の esBody をそのまま返す**(no-op、throw しない)
+ * - `applied === false` = params が現在の本文に適用できず **防御的 no-op** になった
+ *   (不正 index / 不正 permutation 等)。`body` には元の esBody がそのまま入る。
+ * - `applied === true` = operation は正常に実行された。identity permutation のように
+ *   「実行されたが結果が偶然元と同一」のケースも `applied: true`(判別基準は
+ *   「操作が実行できたか」であり「本文が変化したか」ではない)。
+ *
+ * 背景: 旧 `applyStructuralOperation` は no-op でも元の esBody を返すだけで判別不能
+ * だったため、acceptSuggestion が「採用したのに何も変わらないのに対応済みになる」
+ * 不正直な記録を行っていた(2026-06-09 設計レビュー指摘)。
+ */
+export interface StructuralOperationResult {
+  /** 適用後の ES 本文(applied=false のときは元の esBody がそのまま入る) */
+  body: string;
+  /** false = 防御的 no-op(不正 index / 不正 params で適用不能) */
+  applied: boolean;
+}
+
+/**
+ * structural operation を適用し、適用可否(applied)込みで新しい ES 本文を返す。
+ *
+ * - 不正 index / 不正 params の場合は **元の esBody + applied: false** を返す(throw しない)
  * - operation は discriminated union により型安全に narrow される
+ * - 純粋関数(同じ input → 同じ output、副作用なし)
  *
  * @param esBody 適用対象の ES 本文
  * @param params 適用する structural operation の params(discriminated union)
- * @returns 適用後の ES 本文(不正なら元のまま)
+ * @returns `{ body, applied }`(不正なら body = 元のまま、applied = false)
  */
-export function applyStructuralOperation(
+export function applyStructuralOperationWithStatus(
   esBody: string,
   params: StructuralOperationParams,
-): string {
+): StructuralOperationResult {
   const paragraphs = splitParagraphs(esBody);
+  // 防御的 no-op の共通戻り値(不正 index / 不正 params)
+  const noop: StructuralOperationResult = { body: esBody, applied: false };
 
   switch (params.operation) {
     case "delete_paragraph": {
-      if (params.target_paragraph_index < 0) return esBody;
-      if (params.target_paragraph_index >= paragraphs.length) return esBody;
-      return paragraphs
-        .filter((_, i) => i !== params.target_paragraph_index)
-        .join("\n\n");
+      if (params.target_paragraph_index < 0) return noop;
+      if (params.target_paragraph_index >= paragraphs.length) return noop;
+      return {
+        body: paragraphs
+          .filter((_, i) => i !== params.target_paragraph_index)
+          .join("\n\n"),
+        applied: true,
+      };
     }
 
     case "reorder_paragraphs": {
       // 長さ一致 + 全 index が存在範囲 + 全 index ユニーク = permutation 検証
-      if (params.new_order.length !== paragraphs.length) return esBody;
-      if (params.new_order.some((i) => i < 0 || i >= paragraphs.length)) return esBody;
+      if (params.new_order.length !== paragraphs.length) return noop;
+      if (params.new_order.some((i) => i < 0 || i >= paragraphs.length)) return noop;
       const seen = new Set<number>();
       for (const i of params.new_order) {
-        if (seen.has(i)) return esBody;
+        if (seen.has(i)) return noop;
         seen.add(i);
       }
-      return params.new_order.map((i) => paragraphs[i]).join("\n\n");
+      return {
+        body: params.new_order.map((i) => paragraphs[i]).join("\n\n"),
+        applied: true,
+      };
     }
 
     case "merge_paragraphs": {
@@ -165,11 +194,11 @@ export function applyStructuralOperation(
           (i) => i < 0 || i >= paragraphs.length,
         )
       ) {
-        return esBody;
+        return noop;
       }
       // 重複 index は弾く(同じ段落を 2 回統合は意味なし)
       const uniqIndices = Array.from(new Set(params.target_paragraph_indices));
-      if (uniqIndices.length !== params.target_paragraph_indices.length) return esBody;
+      if (uniqIndices.length !== params.target_paragraph_indices.length) return noop;
       const indicesSet = new Set(uniqIndices);
       // 統合内容は元の順序を維持(target_paragraph_indices の指定順ではなく、ES 出現順)
       const sortedIndices = [...uniqIndices].sort((a, b) => a - b);
@@ -180,7 +209,7 @@ export function applyStructuralOperation(
       const remaining = paragraphs.filter((_, i) => !indicesSet.has(i));
       const insertAt = sortedIndices[0];
       remaining.splice(insertAt, 0, merged);
-      return remaining.join("\n\n");
+      return { body: remaining.join("\n\n"), applied: true };
     }
 
     case "move_sentence": {
@@ -193,13 +222,13 @@ export function applyStructuralOperation(
       //   段落内 index 指定(target_sentence_index)は load-bearing な structural_params
       //   スキーマ拡張になり submission 直前のリスクが高いため v2 候補とし、v1 では before/after
       //   の粗い粒度を「仕様」として据え置く(HITL ではユーザーが採用後に微調整できる)。
-      if (params.source_paragraph_index < 0) return esBody;
-      if (params.source_paragraph_index >= paragraphs.length) return esBody;
-      if (params.target_paragraph_index < 0) return esBody;
-      if (params.target_paragraph_index >= paragraphs.length) return esBody;
+      if (params.source_paragraph_index < 0) return noop;
+      if (params.source_paragraph_index >= paragraphs.length) return noop;
+      if (params.target_paragraph_index < 0) return noop;
+      if (params.target_paragraph_index >= paragraphs.length) return noop;
       const sourceSentences = splitSentences(paragraphs[params.source_paragraph_index]);
-      if (params.source_sentence_index < 0) return esBody;
-      if (params.source_sentence_index >= sourceSentences.length) return esBody;
+      if (params.source_sentence_index < 0) return noop;
+      if (params.source_sentence_index >= sourceSentences.length) return noop;
       const movingSentence = sourceSentences[params.source_sentence_index];
       const newSourceSentences = sourceSentences.filter(
         (_, i) => i !== params.source_sentence_index,
@@ -215,7 +244,10 @@ export function applyStructuralOperation(
         const newParagraphs = paragraphs.map((p, i) =>
           i === params.source_paragraph_index ? newParagraph : p,
         );
-        return newParagraphs.filter((p) => p.trim().length > 0).join("\n\n");
+        return {
+          body: newParagraphs.filter((p) => p.trim().length > 0).join("\n\n"),
+          applied: true,
+        };
       }
 
       // source と target が別段落
@@ -231,22 +263,44 @@ export function applyStructuralOperation(
         return p;
       });
       // 移動後に source 段落が空になるケースは段落自体を削除
-      return newParagraphs.filter((p) => p.trim().length > 0).join("\n\n");
+      return {
+        body: newParagraphs.filter((p) => p.trim().length > 0).join("\n\n"),
+        applied: true,
+      };
     }
 
     case "add_paragraph": {
-      if (params.target_paragraph_index < 0) return esBody;
+      if (params.target_paragraph_index < 0) return noop;
       // 末尾追加を許容するため、`==` paragraphs.length も有効
       // target_position === "before" のとき index < paragraphs.length が必要、
       // target_position === "after" のとき index < paragraphs.length が必要(末尾段落の after を許容)
-      if (params.target_paragraph_index >= paragraphs.length) return esBody;
+      if (params.target_paragraph_index >= paragraphs.length) return noop;
       const inserted = [...paragraphs];
       const insertAt =
         params.target_position === "before"
           ? params.target_paragraph_index
           : params.target_paragraph_index + 1;
       inserted.splice(insertAt, 0, params.new_content);
-      return inserted.join("\n\n");
+      return { body: inserted.join("\n\n"), applied: true };
     }
   }
+}
+
+/**
+ * structural operation を適用して新しい ES 本文を返す(互換 wrapper)。
+ *
+ * - 不正 index / 不正 params の場合は **元の esBody をそのまま返す**(no-op、throw しない)
+ * - 適用可否の判別が必要な呼び出し元(acceptSuggestion の no-op 正直化、提出後改善 #4)は
+ *   `applyStructuralOperationWithStatus` を使うこと。preview(SuggestionCard)や
+ *   redo 再適用のように「結果本文だけ欲しい」呼び出し元は本 wrapper のままでよい。
+ *
+ * @param esBody 適用対象の ES 本文
+ * @param params 適用する structural operation の params(discriminated union)
+ * @returns 適用後の ES 本文(不正なら元のまま)
+ */
+export function applyStructuralOperation(
+  esBody: string,
+  params: StructuralOperationParams,
+): string {
+  return applyStructuralOperationWithStatus(esBody, params).body;
 }

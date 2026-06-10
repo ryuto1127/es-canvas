@@ -343,6 +343,9 @@
     "refresh_toast": {
       "completed": "Suggestions updated"
     },
+    "structural_apply_failed_toast": {
+      "message": "This suggestion could not be applied to the current text"
+    },
     "conflict_banner_title": "A newer analysis result is available",
     "conflict_banner_description": "It arrived while you were working. Choose whether to show it or keep your current selection.",
     "conflict_banner_view_aria": "Show the new analysis result",
@@ -358,9 +361,9 @@
     "conflict_modal_accept_new": "Accept new version",
     "conflict_modal_accept_new_aria": "Accept the new version",
     "conflict_modal_accept_new_desc": "Apply the new analysis result wholesale",
-    "conflict_modal_edit_new": "Edit and accept new version",
-    "conflict_modal_edit_new_aria": "Edit and accept the new version",
-    "conflict_modal_edit_new_desc": "Show the new suggestions and keep accepting / editing / rejecting them individually",
+    "conflict_modal_edit_new": "Accept new version and edit",
+    "conflict_modal_edit_new_aria": "Accept the new version and start editing the text directly",
+    "conflict_modal_edit_new_desc": "Apply the new analysis result and start editing the text directly",
     "conflict_modal_keep_current": "Keep current selection",
     "conflict_modal_keep_current_aria": "Keep the current selection",
     "conflict_modal_keep_current_desc": "Discard the new result and keep the current suggestion list"

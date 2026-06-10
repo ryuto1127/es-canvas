@@ -1307,6 +1307,130 @@ test("structural 併用: structural 採用済 + 直接編集で破綻しない(�
 });
 
 // =============================================================================
+// 提出後改善 #4 (2026-06-10): structural 採用 no-op の正直化(store 統合)
+// =============================================================================
+// applyStructuralOperationWithStatus が applied=false を返す(不正 index 等の防御的
+// no-op)とき、acceptSuggestion は「採用成功」として記録しない:
+//  - ACCEPTED 記録なし(suggestion は PENDING のまま)
+//  - clientEsVersion 不変 / actionHistory / actionLog に何も積まない(1:1 同数性維持)
+//  - refresh trigger 不発火(partialRefreshTrigger / pendingRefreshScope 不変)
+//  - structuralApplyFailedAt の timestamp で通知 toast のみ表示
+// 旧挙動は no-op でも ACCEPTED + version+1 + 履歴 snapshot を行っており、
+// 「採用したのに何も変わらないのに対応済みになる」不正直な状態だった
+// (2026-06-09 設計レビュー指摘)。
+process.stdout.write("[提出後改善 #4: structural 採用 no-op の正直化 (store 統合)]\n");
+
+test("structural no-op 採用: 状態を一切変更せず structuralApplyFailedAt のみ set される", () => {
+  // 段落 2 つの ES に対し target_paragraph_index: 9(範囲外)の delete_paragraph
+  // = applyStructuralOperationWithStatus が applied=false を返す防御的 no-op。
+  const esBody = "段落1。\n\n段落2。";
+  seedStore(esBody, [
+    makeFullSuggestion({
+      id: "sug_noop",
+      category: "structural",
+      original: "段落1。",
+      original_span: { start: 0, end: 4 },
+      proposed: "(段落削除:存在しない段落を削除する)",
+      structural_params: { operation: "delete_paragraph", target_paragraph_index: 9 },
+    }),
+  ]);
+  const before = useAnalyzeStore.getState();
+  const versionBefore = before.clientEsVersion;
+  const historyLenBefore = before.actionHistory.length;
+  const logLenBefore = before.actionLog.length;
+  const triggerBefore = before.partialRefreshTrigger;
+  assert.equal(before.structuralApplyFailedAt, null, "前提: 失敗通知は未発火");
+
+  useAnalyzeStore
+    .getState()
+    .acceptSuggestion({ suggestion_id: "sug_noop", suggestion_summary: "段落削除" });
+
+  const after = useAnalyzeStore.getState();
+  // ACCEPTED 記録なし = suggestion は PENDING のまま
+  assert.ok(
+    !after.acceptedSuggestionIds.includes("sug_noop"),
+    "no-op 採用は acceptedSuggestionIds に入らない(PENDING のまま)",
+  );
+  assert.ok(
+    !after.rejectedSuggestionIds.includes("sug_noop"),
+    "rejected にも入らない",
+  );
+  // 本文不変
+  assert.equal(after.currentEsBody, esBody, "currentEsBody 不変");
+  // version 不変(refresh 整合の基準を動かさない)
+  assert.equal(after.clientEsVersion, versionBefore, "clientEsVersion 不変");
+  // actionHistory / actionLog に何も積まない + 1:1 同数性維持
+  // (docs/memory/codebase.md「同 index = 同一操作」不変条件を新たに破らない)
+  assert.equal(
+    after.actionHistory.length,
+    historyLenBefore,
+    "actionHistory に何も積まない",
+  );
+  assert.equal(after.actionLog.length, logLenBefore, "actionLog に何も積まない");
+  assert.equal(
+    after.actionHistory.length,
+    after.actionLog.length,
+    "actionHistory / actionLog の同数性を維持",
+  );
+  // refresh trigger 不発火
+  assert.equal(
+    after.partialRefreshTrigger,
+    triggerBefore,
+    "partialRefreshTrigger 不変(refresh 不発火)",
+  );
+  assert.equal(after.pendingRefreshScope, null, "pendingRefreshScope 不変(null)");
+  // 通知 timestamp のみ set される
+  assert.ok(
+    after.structuralApplyFailedAt !== null,
+    "structuralApplyFailedAt が set される(通知 toast 用)",
+  );
+});
+
+test("structural 正常採用: applied=true なら従来通り ACCEPTED + version+1、失敗通知は立たない", () => {
+  const esBody = "段落1。\n\n段落2。";
+  seedStore(esBody, [
+    makeFullSuggestion({
+      id: "sug_ok",
+      category: "structural",
+      original: "段落1。",
+      original_span: { start: 0, end: 4 },
+      proposed: "(段落削除:冒頭段落を削除する)",
+      structural_params: { operation: "delete_paragraph", target_paragraph_index: 0 },
+    }),
+  ]);
+  const before = useAnalyzeStore.getState();
+  const versionBefore = before.clientEsVersion;
+  const historyLenBefore = before.actionHistory.length;
+
+  useAnalyzeStore
+    .getState()
+    .acceptSuggestion({ suggestion_id: "sug_ok", suggestion_summary: "段落削除" });
+
+  const after = useAnalyzeStore.getState();
+  assert.ok(
+    after.acceptedSuggestionIds.includes("sug_ok"),
+    "正常採用は acceptedSuggestionIds に入る",
+  );
+  assert.equal(after.currentEsBody, "段落2。", "currentEsBody が機械適用で更新される");
+  assert.equal(after.clientEsVersion, versionBefore + 1, "clientEsVersion +1");
+  assert.equal(
+    after.actionHistory.length,
+    historyLenBefore + 1,
+    "ACCEPTED entry が actionHistory に積まれる",
+  );
+  assert.equal(
+    after.actionHistory.length,
+    after.actionLog.length,
+    "actionHistory / actionLog の同数性を維持",
+  );
+  assert.equal(
+    after.structuralApplyFailedAt,
+    null,
+    "正常採用では失敗通知が立たない",
+  );
+});
+
+// =============================================================================
 // reconcileSpansToDisplayedText: 表示テキストへの verify→relocate→suppress 補正(症状 B)
 // =============================================================================
 // 2026-05-28 ハイライト位置ずれ(症状 B)修正。getDerivedSpans の出力(派生 span)を、

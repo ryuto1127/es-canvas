@@ -52,7 +52,10 @@ import type { InterviewQuestions } from "@/lib/schema/interview";
 import type { CaptureMeta } from "@/lib/llm/capture_meta";
 // v2 Phase B3 (2026-05-26): structural カテゴリ採用時の派生 ES 生成
 // (client side 機械適用、AI hallucination 回避)。
-import { applyStructuralOperation } from "@/lib/state/structural_ops";
+import {
+  applyStructuralOperation,
+  applyStructuralOperationWithStatus,
+} from "@/lib/state/structural_ops";
 // v2 bug fix (2026-05-26): 派生 ES / 派生 span 計算で structural を除外するために
 // category 型を参照する(structural の proposed は placeholder で、置換用文字列ではない)。
 // 2026-05-27 derivedSpans 座標系統一 bug fix: partial refresh / refresh の結果に含まれる
@@ -1154,6 +1157,25 @@ export interface AnalyzeStore {
   refreshCompletedAt: number | null;
 
   // ---------------------------------------------------------------------------
+  // 提出後改善 #4 (2026-06-10): structural 採用 no-op の通知 toast 用 state
+  // ---------------------------------------------------------------------------
+  // structural suggestion の採用時、structural_params が現在の本文に適用できなかった
+  // (applyStructuralOperationWithStatus が applied=false を返した)時刻の timestamp。
+  // StructuralApplyFailureToast component がこの値を購読し、null 以外なら数秒間
+  // 「この提案は現在の本文には適用できませんでした」を表示する。
+  //
+  // 設計判断:
+  //  - refreshCompletedAt と同じ timestamp pattern(連続発生でも useEffect が再発火)。
+  //  - acceptSuggestion の structural no-op 経路 **でのみ** set される。このとき
+  //    ACCEPTED 記録 / clientEsVersion+1 / actionHistory / actionLog / refresh trigger は
+  //    一切行わず、suggestion は PENDING のまま(「採用したのに何も変わらないのに
+  //    対応済みになる」不正直さの修復、2026-06-09 設計レビュー指摘)。
+  //  - reset 系(startAnalysis / resetSession / startEditingMode / cancelEditingMode)で
+  //    null に戻す。EditingSnapshot には **保存しない**(refreshCompletedAt /
+  //    refreshPhase と同じ揮発 UI 通知カテゴリ、snapshot 対象外の規約に従う)。
+  structuralApplyFailedAt: number | null;
+
+  // ---------------------------------------------------------------------------
   // エージェント的対話(AI 逆質問) (2026-05-27)
   // ---------------------------------------------------------------------------
   // AI が分析時 / partial refresh 時に出した clarification_questions に対する
@@ -1367,6 +1389,10 @@ export interface AnalyzeStore {
   // clearRefreshCompletedAt: RefreshCompletionToast の 3 秒タイマー満了時に呼ぶ。
   //   refreshCompletedAt を null に戻し、toast を画面から消す。
   clearRefreshCompletedAt: () => void;
+
+  // clearStructuralApplyFailedAt: StructuralApplyFailureToast のタイマー満了時に呼ぶ。
+  //   structuralApplyFailedAt を null に戻し、toast を画面から消す(提出後改善 #4)。
+  clearStructuralApplyFailedAt: () => void;
 
   // ---------------------------------------------------------------------------
   // Canvas UI 用 actions (Phase G Step 3b-1 追加 2026-05-23)
@@ -2076,6 +2102,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   conflictNotification: null,
   // v2 dogfood UX 改善 Task C (2026-05-26): partial refresh 完了 toast 用 timestamp(初期 null)
   refreshCompletedAt: null,
+  // 提出後改善 #4 (2026-06-10): structural 採用 no-op 通知 toast 用 timestamp(初期 null)
+  structuralApplyFailedAt: null,
   // 2026-05-27 エージェント的対話(AI 逆質問): clarification 回答の集合(初期空)
   clarificationAnswers: [] as ClarificationAnswer[],
 
@@ -2142,6 +2170,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         conflictNotification: null,
         // v2 dogfood UX 改善 Task C (2026-05-26): partial refresh 完了 toast の timestamp もリセット
         refreshCompletedAt: null,
+        // 提出後改善 #4 (2026-06-10): structural 採用 no-op 通知 toast の timestamp もリセット
+        structuralApplyFailedAt: null,
         // 2026-05-27 エージェント的対話(AI 逆質問): 回答も session 単位の揮発状態として
         // リセット系で空配列に戻す(新規分析 / セッション全リセット / 編集モード遷移は
         // すべて回答コンテキストを破棄する)
@@ -2256,6 +2286,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         conflictNotification: null,
         // v2 dogfood UX 改善 Task C (2026-05-26): partial refresh 完了 toast の timestamp もリセット
         refreshCompletedAt: null,
+        // 提出後改善 #4 (2026-06-10): structural 採用 no-op 通知 toast の timestamp もリセット
+        structuralApplyFailedAt: null,
         // 2026-05-27 エージェント的対話(AI 逆質問): 回答も session 単位の揮発状態として
         // リセット系で空配列に戻す(新規分析 / セッション全リセット / 編集モード遷移は
         // すべて回答コンテキストを破棄する)
@@ -2370,8 +2402,10 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
       // v2 Phase B3 (2026-05-26): structural 採用時の派生 ES 機械生成 + snapshot 取得。
       // structural は AI ではなく client side で applyStructuralOperation を適用し、
       // currentEsBody を更新する。Undo で巻き戻すため snapshot を ActionLogEntry に持たせる。
-      // 不正 params / 不正 index の場合 applyStructuralOperation は元 esBody を返す(no-op)
-      // ため、currentEsBody が変わらないケースもありうる(防御的に snapshot は常に取る)。
+      // 提出後改善 #4 (2026-06-10): 不正 params / 不正 index の防御的 no-op は
+      // applyStructuralOperationWithStatus の applied=false で判別し、採用として
+      // 記録せず早期 return する(下記)。よって ACCEPTED が記録されるのは
+      // 「操作が実際に実行された」場合のみ。
       //
       // 2026-05-30 N4 調査メモ(座標系の整合性、reconcile が吸収していることを確認済):
       //   structural 採用で段落順 / 内容が変わると currentEsBody が、非 structural 指摘の
@@ -2390,13 +2424,28 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         targetSuggestion?.category === "structural" &&
         targetSuggestion.structural_params !== undefined;
       const currentEsBodyBefore = s.currentEsBody;
-      const newCurrentEsBody = isStructural
-        ? applyStructuralOperation(
+      // 提出後改善 #4 (2026-06-10): 適用可否(applied)込みで structural を適用する。
+      // 旧実装は applyStructuralOperation(string 返却)で no-op を判別できず、
+      // 「採用したのに何も変わらないのに ACCEPTED + version+1 + 履歴記録される」
+      // 不正直な状態が生じていた(2026-06-09 設計レビュー指摘)。
+      const structuralResult = isStructural
+        ? applyStructuralOperationWithStatus(
             s.currentEsBody,
             // optional の存在を上で narrow 済(targetSuggestion.structural_params !== undefined)
             targetSuggestion.structural_params!,
           )
-        : s.currentEsBody;
+        : null;
+      // structural の防御的 no-op(不正 index 等で現在の本文に適用不能)は「採用成功」と
+      // して記録しない。ACCEPTED 記録 / clientEsVersion+1 / actionHistory / actionLog /
+      // refresh trigger を **一切行わず**、suggestion は PENDING のまま、
+      // structuralApplyFailedAt の timestamp で「適用できませんでした」toast のみ表示する。
+      // actionHistory / actionLog はどちらにも積まない(両配列の 1:1 同数性を維持、
+      // docs/memory/codebase.md の不変条件エントリ参照)。
+      if (structuralResult !== null && !structuralResult.applied) {
+        return { structuralApplyFailedAt: Date.now() };
+      }
+      const newCurrentEsBody =
+        structuralResult !== null ? structuralResult.body : s.currentEsBody;
       // v2 dogfood UX 改善 Task A (2026-05-26): structural 採用時、HistoryPanel が
       // 「段落 N を削除: '冒頭…'」等の具体的操作を rendering できるよう snapshot を生成。
       // 既存 currentEsBodyBefore(Undo 用)とは独立の追加 field(display 専用)。
@@ -4517,6 +4566,10 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
   // toast component の useEffect が再発火して新タイマーを開始 + 表示継続できる。
   clearRefreshCompletedAt: () => set({ refreshCompletedAt: null }),
 
+  // 提出後改善 #4 (2026-06-10): StructuralApplyFailureToast のタイマー満了時に呼ぶ。
+  // structuralApplyFailedAt を null に戻し、toast を画面から消す。
+  clearStructuralApplyFailedAt: () => set({ structuralApplyFailedAt: null }),
+
   // 「新版を採用」: conflictNotification.newResult を強制的に merge する。
   //   version 整合チェックをスキップして apply 系のロジックを直接実行する形にする。
   //   設計判断: applyPartialResult / applyRefreshResult の version チェック分岐を
@@ -4795,6 +4848,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         conflictNotification: null,
         // v2 dogfood UX 改善 Task C (2026-05-26): partial refresh 完了 toast の timestamp もリセット
         refreshCompletedAt: null,
+        // 提出後改善 #4 (2026-06-10): structural 採用 no-op 通知 toast の timestamp もリセット
+        structuralApplyFailedAt: null,
         // 2026-05-27 エージェント的対話(AI 逆質問): 回答も session 単位の揮発状態として
         // リセット系で空配列に戻す(新規分析 / セッション全リセット / 編集モード遷移は
         // すべて回答コンテキストを破棄する)
@@ -4871,6 +4926,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         conflictNotification: null,
         // v2 dogfood UX 改善 Task C (2026-05-26): partial refresh 完了 toast の timestamp も復帰時にリセット
         refreshCompletedAt: null,
+        // 提出後改善 #4 (2026-06-10): structural 採用 no-op 通知 toast の timestamp も復帰時にリセット
+        structuralApplyFailedAt: null,
         // 2026-05-27 エージェント的対話(AI 逆質問): 編集モードキャンセル復帰でも回答リセット。
         // 復帰先の analysisResult は cancel 前の snapshot に戻るが、ユーザーの回答コンテキスト
         // は揮発状態として捨てる(snapshot 取り扱いを増やさない簡素な設計)

@@ -1164,10 +1164,25 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
   //  - contentEditable の標準 Undo / Redo (browser-native) が動くため、上書きしない。
   //  - これにより「直接編集モードで Cmd+Z = テキストの直前入力を取り消す」という直感が
   //    保たれる(モードを抜けてから Canvas 側の Undo を使う)。
+  //
+  // 提出後改善 #4 (2026-06-10): 入力系要素(input / textarea / contentEditable)に
+  // フォーカスがある時も何もしない(SuggestionDetailPanel の J/K ハンドラと同じ
+  // activeElement ガード)。旧実装は directEditMode しかガードしておらず、
+  // SuggestionCard の「編集して採用」textarea や逆質問回答 textarea で入力中に
+  // Cmd+Z を押すと、テキスト undo ではなく store の undo(1) が発火し、
+  // preventDefault でブラウザ標準のテキスト undo まで奪っていた
+  // (2026-06-09 設計レビューで confirmed)。
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // 直接編集中はブラウザ標準の undo / redo に委ねる
       if (directEditMode) return;
+      // 入力系にフォーカス中はブラウザ標準のテキスト undo / redo に委ねる
+      const active = document.activeElement;
+      if (active) {
+        const tag = active.tagName.toLowerCase();
+        if (tag === "input" || tag === "textarea") return;
+        if (active.getAttribute("contenteditable") !== null) return;
+      }
       const isMac =
         typeof navigator !== "undefined" &&
         /Mac|iPhone|iPad|iPod/.test(navigator.platform);
@@ -1568,12 +1583,22 @@ export function Canvas({ charLimit, suggestions }: CanvasProps) {
           setConflictModalOpen(false);
         }}
         onEditNew={() => {
-          // 「新版を編集して採用」: 新版を採用しつつ accepted/edited 集合を保持。
-          // 実装は「新版を全面適用」(applyConflictNewVersion)と同じだが、その後
-          // 「ユーザーは個別カードで採用 / 編集 / 却下を行える」という設計判断のため、
-          // 動作上は applyConflictNewVersion と同等。新 suggestions が表示された状態で
-          // ユーザーは引き続き SuggestionCard でアクション可能。
+          // 提出後改善 #4 (2026-06-10): 「新版を採用して編集」の実体化。
+          // 旧実装は「新版を採用」と完全に同一動作(applyConflictNewVersion のみ)で、
+          // ボタンが 2 つあるのに違いが無い不正直な状態だった(2026-06-09 設計レビュー
+          // 指摘)。Inviolable constraint「直接アクション 3 つを提示」のため 2 択化は
+          // 不可、第三アクションに実体を与える:
+          //   1. applyConflictNewVersion() で新版を全面適用(analysisResult /
+          //      clientEsVersion / conflictNotification を先に更新)
+          //   2. その後 toggleDirectEdit()(OFF → ON)で直接編集モードへ遷移。
+          //      flatten は conflict 適用後の suggestions / accepted 集合を基準に
+          //      行われるため、編集対象 = 新版反映済みの派生 ES になる(順序が逆だと
+          //      旧 suggestions 基準の flatten になり不整合)。
+          // 防御: 万一すでに直接編集中なら toggle しない(OFF にしてしまうのを防ぐ)。
           applyConflictNewVersion();
+          if (!useAnalyzeStore.getState().directEditMode) {
+            toggleDirectEdit();
+          }
           setConflictModalOpen(false);
         }}
         onKeepCurrent={() => {
@@ -2084,8 +2109,9 @@ function ConflictNotificationBanner({
 //
 // AGENTS.md 不変制約「競合通知は中間プレビューステップなし、直接アクション 3 つ」:
 //  - 「新版を採用」: applyConflictNewVersion(全面マージ)
-//  - 「新版を編集して採用」: 同じく applyConflictNewVersion 経由で新 suggestions を
-//    表示状態にしつつ、ユーザーは引き続き個別カードで採用 / 編集 / 却下可能
+//  - 「新版を採用して編集」: applyConflictNewVersion で全面マージした後、
+//    toggleDirectEdit で直接編集モードへ遷移(提出後改善 #4、2026-06-10 で実体化。
+//    旧実装は「新版を採用」と同一動作だった)
 //  - 「現在の選択を維持」: dismissConflict(silent discard と同等の最終結果)
 //
 // 設計判断: shadcn の Dialog 依存を増やさない簡易モーダル(固定オーバーレイ + 中央配置)。
